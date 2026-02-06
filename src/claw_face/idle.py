@@ -17,6 +17,7 @@ import subprocess
 import sys
 import threading
 from dataclasses import dataclass
+from datetime import datetime, time, timedelta
 from typing import Optional
 
 
@@ -43,6 +44,8 @@ class Settings:
     lock_on_exit: bool
     face_port: int
     face_args: list[str]
+    screen_off: Optional[tuple[int, int]] = None  # (hour, minute) — start of night
+    screen_on: Optional[tuple[int, int]] = None  # (hour, minute) — end of night
 
 
 def _get_idle_seconds_from_gsettings() -> int:
@@ -116,11 +119,135 @@ class IdleDaemon:
             "org.gnome.ScreenSaver",
         )
 
+        if settings.screen_off is not None:
+            self._display_config = _proxy(
+                "org.gnome.Mutter.DisplayConfig",
+                "/org/gnome/Mutter/DisplayConfig",
+                "org.freedesktop.DBus.Properties",
+            )
+        else:
+            self._display_config = None
+
         self._loop = GLib.MainLoop()
         self._idle_watch_id: Optional[int] = None
         self._user_active_watch_id: Optional[int] = None
         self._face_proc: Optional[subprocess.Popen] = None
+        self._transition_timer_id: Optional[int] = None
         self._exiting = False
+
+    # -- Night schedule helpers ------------------------------------------
+
+    def _night_enabled(self) -> bool:
+        return self.settings.screen_off is not None and self.settings.screen_on is not None
+
+    def _is_night(self) -> bool:
+        if not self._night_enabled():
+            return False
+        now = datetime.now().time()
+        off_h, off_m = self.settings.screen_off  # type: ignore[misc]
+        on_h, on_m = self.settings.screen_on  # type: ignore[misc]
+        t_off = time(off_h, off_m)
+        t_on = time(on_h, on_m)
+        if t_off <= t_on:
+            # e.g. 01:00–06:00 (no midnight wrap)
+            return t_off <= now < t_on
+        else:
+            # e.g. 22:00–07:00 (wraps midnight)
+            return now >= t_off or now < t_on
+
+    def _dpms_off(self) -> None:
+        if self._display_config is None:
+            return
+        try:
+            _dbus_call(
+                self._display_config,
+                "Set",
+                GLib.Variant(
+                    "(ssv)",
+                    ("org.gnome.Mutter.DisplayConfig", "PowerSaveMode", GLib.Variant("i", 3)),
+                ),
+            )
+        except Exception:
+            pass
+
+    def _dpms_on(self) -> None:
+        if self._display_config is None:
+            return
+        try:
+            _dbus_call(
+                self._display_config,
+                "Set",
+                GLib.Variant(
+                    "(ssv)",
+                    ("org.gnome.Mutter.DisplayConfig", "PowerSaveMode", GLib.Variant("i", 0)),
+                ),
+            )
+        except Exception:
+            pass
+
+    def _seconds_until_next_transition(self) -> int:
+        """Seconds from now until the next screen-off or screen-on boundary."""
+        now = datetime.now()
+        off_h, off_m = self.settings.screen_off  # type: ignore[misc]
+        on_h, on_m = self.settings.screen_on  # type: ignore[misc]
+
+        # Build candidate datetimes for today and tomorrow
+        candidates: list[datetime] = []
+        for day_offset in (0, 1):
+            base = now + timedelta(days=day_offset)
+            for h, m in ((off_h, off_m), (on_h, on_m)):
+                dt = base.replace(hour=h, minute=m, second=0, microsecond=0)
+                if dt > now:
+                    candidates.append(dt)
+
+        nearest = min(candidates)
+        return max(1, int((nearest - now).total_seconds()))
+
+    def _schedule_transition(self) -> None:
+        if self._transition_timer_id is not None:
+            GLib.source_remove(self._transition_timer_id)
+            self._transition_timer_id = None
+        if not self._night_enabled():
+            return
+        secs = self._seconds_until_next_transition()
+        self._transition_timer_id = GLib.timeout_add_seconds(secs, self._on_transition)
+
+    def _on_transition(self) -> int:
+        self._transition_timer_id = None
+        if self._exiting:
+            return GLib.SOURCE_REMOVE
+
+        if self._is_night():
+            # Entering night: kill Claw Face if running, turn display off
+            self._kill_face()
+            self._dpms_off()
+        else:
+            # Entering day: wake display, re-arm idle watch for normal behavior
+            self._dpms_on()
+
+        # Re-arm idle watch so the correct action fires on next idle
+        self._remove_watch(self._idle_watch_id)
+        self._idle_watch_id = None
+        self._remove_watch(self._user_active_watch_id)
+        self._user_active_watch_id = None
+        try:
+            _dbus_call(self.idle, "ResetIdletime", None)
+        except Exception:
+            pass
+        self._set_idle_watch()
+
+        # Schedule the next boundary
+        self._schedule_transition()
+        return GLib.SOURCE_REMOVE
+
+    def _kill_face(self) -> None:
+        if self._face_proc is not None and self._face_proc.poll() is None:
+            try:
+                self._face_proc.terminate()
+            except Exception:
+                pass
+
+    # -- Watch management ------------------------------------------------
 
     def _remove_watch(self, watch_id: Optional[int]) -> None:
         if watch_id is None:
@@ -178,6 +305,10 @@ class IdleDaemon:
     def _start_face_if_needed(self):
         if self._exiting:
             return GLib.SOURCE_REMOVE
+        if self._is_night():
+            self._dpms_off()
+            self._set_user_active_watch()
+            return GLib.SOURCE_REMOVE
         if self._face_proc is not None and self._face_proc.poll() is None:
             return GLib.SOURCE_REMOVE
         if _screensaver_get_active(self.screensaver):
@@ -229,11 +360,11 @@ class IdleDaemon:
         self._remove_watch(self._user_active_watch_id)
         self._user_active_watch_id = None
 
-        if self._face_proc is not None and self._face_proc.poll() is None:
-            try:
-                self._face_proc.terminate()
-            except Exception:
-                pass
+        if self._transition_timer_id is not None:
+            GLib.source_remove(self._transition_timer_id)
+            self._transition_timer_id = None
+
+        self._kill_face()
 
         try:
             self._loop.quit()
@@ -243,6 +374,8 @@ class IdleDaemon:
     def run(self) -> int:
         self._set_idle_watch()
         self.idle.connect("g-signal", self._on_idle_signal)
+        if self._night_enabled():
+            self._schedule_transition()
 
         def _handle_sig(_signum, _frame):
             self.stop()
@@ -255,6 +388,18 @@ class IdleDaemon:
 
         self._loop.run()
         return 0
+
+
+def _parse_hhmm(value: str) -> tuple[int, int]:
+    """Parse 'HH:MM' into (hour, minute), or raise SystemExit."""
+    try:
+        h, m = value.split(":")
+        h, m = int(h), int(m)
+        if not (0 <= h <= 23 and 0 <= m <= 59):
+            raise ValueError
+        return (h, m)
+    except (ValueError, AttributeError):
+        raise SystemExit(f"Invalid time format: {value!r} (expected HH:MM)")
 
 
 def _parse_args(argv: list[str]) -> Settings:
@@ -279,6 +424,23 @@ def _parse_args(argv: list[str]) -> Settings:
         help="Port to run Claw Face on (0 = ephemeral, recommended).",
     )
     p.add_argument(
+        "--screen-off",
+        default="21:00",
+        metavar="HH:MM",
+        help="Start of night window (default: 21:00). Idle turns display off via DPMS instead of launching Claw Face.",
+    )
+    p.add_argument(
+        "--screen-on",
+        default="07:00",
+        metavar="HH:MM",
+        help="End of night window (default: 07:00).",
+    )
+    p.add_argument(
+        "--no-screen-off",
+        action="store_true",
+        help="Disable the night screen-off schedule entirely.",
+    )
+    p.add_argument(
         "face_args",
         nargs=argparse.REMAINDER,
         help="Extra args passed to claw-face (prefix with '--', e.g. claw-face-idle -- --fps 20).",
@@ -298,11 +460,21 @@ def _parse_args(argv: list[str]) -> Settings:
     if face_args and face_args[0] == "--":
         face_args = face_args[1:]
 
+    # Parse night schedule (enabled by default, --no-screen-off disables)
+    if a.no_screen_off:
+        screen_off = None
+        screen_on = None
+    else:
+        screen_off = _parse_hhmm(a.screen_off)
+        screen_on = _parse_hhmm(a.screen_on)
+
     return Settings(
         idle_seconds=idle_seconds,
         lock_on_exit=not bool(a.no_lock),
         face_port=int(a.port),
         face_args=face_args,
+        screen_off=screen_off,
+        screen_on=screen_on,
     )
 
 
