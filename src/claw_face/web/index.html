@@ -520,7 +520,7 @@ function frame() {
   ctx.fillStyle = '#010108';
   ctx.fillRect(0, 0, W, H);
 
-  const s = Math.min(W, H) / 380 * (1 + Math.sin(breathPhase) * 0.012);
+  const s = Math.min(W, H) / 260 * (1 + Math.sin(breathPhase) * 0.012);
   const from = buildExpr(currentExpr, s, lookX, lookY, blinkAmt, talkPhase);
   const to = buildExpr(targetExpr, s, lookX, lookY, blinkAmt, talkPhase);
   const t = ease(morphT);
