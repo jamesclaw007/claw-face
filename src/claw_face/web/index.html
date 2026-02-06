@@ -27,10 +27,23 @@
       left: 50%;
       transform: translateX(-50%);
       font-family: 'Courier New', monospace;
-      font-size: 13px;
-      color: rgba(150, 150, 160, 0.8);
-      letter-spacing: 1px;
+      font-size: 15px;
+      font-weight: 600;
+      color: rgba(200, 205, 215, 0.92);
+      letter-spacing: 0.8px;
       white-space: nowrap;
+      max-width: min(92vw, 1200px);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      padding: 8px 12px;
+      border-radius: 10px;
+      background: linear-gradient(
+        to bottom,
+        rgba(0, 0, 0, 0.28),
+        rgba(0, 0, 0, 0.06)
+      );
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      text-shadow: 0 1px 0 rgba(0, 0, 0, 0.65);
       opacity: 0;
       transition: opacity 1.5s ease;
       z-index: 10;
@@ -52,8 +65,9 @@
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 
-const DOT_R = 1.6;
-const DOT_SPACING = 4.2;
+// Dot-matrix tuning (bigger spacing/radius = fewer dots for same face size)
+let DOT_R = 6.5;
+let DOT_SPACING = 17.0;
 let DOT_COLOR = '#d8dce8';
 let BG_COLOR = '#010108';
 
@@ -407,14 +421,16 @@ function drawDots(dots) {
 // STATUS DISPLAY
 // ============================================================
 const statusEl = document.getElementById('status');
-let statusCheckInterval = 7000;
+let statusCheckInterval = 1000;
 
 function fetchStatus() {
   fetch('/api/status')
     .then(r => r.ok ? r.json() : Promise.reject())
     .then(data => {
       if (data.text) {
-        statusEl.textContent = 'Working on: ' + data.text;
+        // Display server-provided text verbatim so "Ready" doesn't become
+        // "Working on: Ready". The OpenClaw hook can include a prefix when desired.
+        statusEl.textContent = data.text;
         statusEl.classList.add('visible');
       } else {
         statusEl.classList.remove('visible');
@@ -467,6 +483,16 @@ fetch('/api/config')
       const fps = Math.max(1, Math.min(240, cfg.display.fps | 0));
       TARGET_FPS = fps;
       FRAME_TIME = 1000 / TARGET_FPS;
+    }
+    if (cfg.display) {
+      if (cfg.display.dot_spacing != null) {
+        const ds = Number(cfg.display.dot_spacing);
+        if (Number.isFinite(ds) && ds >= 2) DOT_SPACING = ds;
+      }
+      if (cfg.display.dot_radius != null) {
+        const dr = Number(cfg.display.dot_radius);
+        if (Number.isFinite(dr) && dr >= 0.5) DOT_R = dr;
+      }
     }
   })
   .catch(() => {

@@ -39,6 +39,9 @@ class Display:
     fps: int = 30
     window_width: int = 1280
     window_height: int = 720
+    # Dot-matrix tuning (larger spacing/radius = fewer dots for same face size)
+    dot_spacing: float = 17.0
+    dot_radius: float = 6.5
 
 
 def _safe_init(cls, data: dict):

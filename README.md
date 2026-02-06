@@ -113,7 +113,9 @@ Creates `~/.config/claw-face/config.json`:
     "fullscreen": true,
     "fps": 30,
     "window_width": 1280,
-    "window_height": 720
+    "window_height": 720,
+    "dot_spacing": 17.0,
+    "dot_radius": 6.5
   }
 }
 ```
