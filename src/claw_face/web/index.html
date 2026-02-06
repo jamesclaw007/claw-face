@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claw Face</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #000;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: none;
+    }
+
+    canvas { display: block; }
+
+    /* ---- Status display ---- */
+    #status {
+      position: fixed;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      color: rgba(150, 150, 160, 0.8);
+      letter-spacing: 1px;
+      white-space: nowrap;
+      opacity: 0;
+      transition: opacity 1.5s ease;
+      z-index: 10;
+      pointer-events: none;
+    }
+    #status.visible { opacity: 1; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+
+  <div id="status"></div>
+
+
+<script>
+// ============================================================
+// CANVAS SETUP
+// ============================================================
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+const DOT_R = 1.6;
+const DOT_SPACING = 4.2;
+const DOT_COLOR = '#d8dce8';
+
+let W, H, cx, cy;
+
+function resize() {
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = W;
+  canvas.height = H;
+  cx = W / 2;
+  cy = H / 2;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ============================================================
+// UTILITY FUNCTIONS
+// ============================================================
+function rnd(a, b) { return a + Math.random() * (b - a); }
+function ease(t) { return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2; }
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+// ============================================================
+// ANIMATION STATE
+// ============================================================
+let currentExpr = 'neutral';
+let targetExpr = 'neutral';
+let morphT = 1;
+const MORPH_SPEED = 3.5;
+
+// Blink
+let blinkAmt = 0, blinkPhase = 0, blinkTimer = 0;
+let blinkInterval = rnd(3000, 5500);
+
+// Look direction
+let lookX = 0, lookY = 0, targetLookX = 0, targetLookY = 0;
+let lookTimer = 0, lookInterval = rnd(2000, 5000);
+
+// Breathing & talk
+let breathPhase = 0, talkPhase = 0;
+
+// ============================================================
+// EXPRESSION AUTO-CYCLING (weighted random, from face.py)
+// ============================================================
+const EXPRESSION_WEIGHTS = {
+  neutral:   25,
+  happy:     35,
+  sad:        5,
+  angry:      3,
+  surprised:  8,
+  sleepy:    12,
+  wink:      12,
+  love:       8,
+  talking:    5,
+};
+
+let autoCycleEnabled = true;
+let autoCycleTimer = 0;
+let autoCycleInterval = rnd(8000, 20000);
+
+function weightedRandomExpression() {
+  const names = Object.keys(EXPRESSION_WEIGHTS);
+  const weights = names.map(n => EXPRESSION_WEIGHTS[n]);
+  const total = weights.reduce((s, w) => s + w, 0);
+  let r = Math.random() * total;
+  for (let i = 0; i < names.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return names[i];
+  }
+  return names[names.length - 1];
+}
+
+// ============================================================
+// SHAPE PRIMITIVES (dot-matrix geometry)
+// ============================================================
+function dotsCircle(ox, oy, r) {
+  const dots = [], step = DOT_SPACING;
+  if (r < 1) return dots;
+  const x0 = Math.ceil((ox - r) / step) * step;
+  const y0 = Math.ceil((oy - r) / step) * step;
+  for (let y = y0; y <= oy + r; y += step) {
+    for (let x = x0; x <= ox + r; x += step) {
+      const dx = x - ox, dy = y - oy;
+      if (dx*dx + dy*dy <= r*r) dots.push([x, y]);
+    }
+  }
+  return dots;
+}
+
+function dotsEllipse(ox, oy, rx, ry) {
+  const dots = [], step = DOT_SPACING;
+  if (rx < 1 || ry < 1) return dots;
+  const x0 = Math.ceil((ox - rx) / step) * step;
+  const y0 = Math.ceil((oy - ry) / step) * step;
+  for (let y = y0; y <= oy + ry; y += step) {
+    for (let x = x0; x <= ox + rx; x += step) {
+      const dx = (x - ox) / rx, dy = (y - oy) / ry;
+      if (dx*dx + dy*dy <= 1) dots.push([x, y]);
+    }
+  }
+  return dots;
+}
+
+function dotsHalfCircle(ox, oy, r, side) {
+  const dots = [], step = DOT_SPACING;
+  if (r < 1) return dots;
+  const x0 = Math.ceil((ox - r) / step) * step;
+  const y0 = Math.ceil((oy - r) / step) * step;
+  for (let y = y0; y <= oy + r; y += step) {
+    for (let x = x0; x <= ox + r; x += step) {
+      const dx = x - ox, dy = y - oy;
+      if (dx*dx + dy*dy <= r*r) {
+        if (side === 'top' && dy <= step * 0.5) dots.push([x, y]);
+        else if (side === 'bottom' && dy >= -step * 0.5) dots.push([x, y]);
+      }
+    }
+  }
+  return dots;
+}
+
+function dotsLine(ox, oy, width, thickness) {
+  const dots = [], step = DOT_SPACING;
+  const hw = width / 2, ht = Math.max(thickness, step * 0.4) / 2;
+  const x0 = Math.ceil((ox - hw) / step) * step;
+  const y0 = Math.ceil((oy - ht) / step) * step;
+  for (let y = y0; y <= oy + ht; y += step) {
+    for (let x = x0; x <= ox + hw; x += step) {
+      dots.push([x, y]);
+    }
+  }
+  return dots;
+}
+
+function dotsArc(ox, oy, radius, startA, endA, thick) {
+  const dots = [], step = DOT_SPACING;
+  if (radius < 1) return dots;
+  const bound = radius + thick + step;
+  const x0 = Math.ceil((ox - bound) / step) * step;
+  const y0 = Math.ceil((oy - bound) / step) * step;
+  for (let y = y0; y <= oy + bound; y += step) {
+    for (let x = x0; x <= ox + bound; x += step) {
+      const dx = x - ox, dy = y - oy;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      if (dist < radius - thick || dist > radius + thick) continue;
+      let a = Math.atan2(dy, dx);
+      if (a < 0) a += Math.PI * 2;
+      let s = startA, e = endA;
+      if (s < 0) s += Math.PI * 2;
+      if (e < 0) e += Math.PI * 2;
+      const ok = s <= e ? (a >= s && a <= e) : (a >= s || a <= e);
+      if (ok) dots.push([x, y]);
+    }
+  }
+  return dots;
+}
+
+function dotsHeart(ox, oy, size) {
+  const dots = [], step = DOT_SPACING;
+  if (size < 2) return dots;
+  const x0 = Math.ceil((ox - size * 1.2) / step) * step;
+  const y0 = Math.ceil((oy - size * 1.2) / step) * step;
+  for (let y = y0; y <= oy + size * 1.4; y += step) {
+    for (let x = x0; x <= ox + size * 1.2; x += step) {
+      const nx = (x - ox) / size, ny = -(y - oy) / size + 0.2;
+      const eq = nx*nx + ny*ny - 1;
+      if (eq*eq*eq - nx*nx * ny*ny*ny <= 0) dots.push([x, y]);
+    }
+  }
+  return dots;
+}
+
+// Alias for closed-eye line
+function dotsInLine(ox, oy, w, t) { return dotsLine(ox, oy, w, t); }
+
+// ============================================================
+// EXPRESSION BUILDER
+// ============================================================
+function buildExpr(name, s, lx, ly, blink, talk) {
+  const sep = 80 * s;
+  const eyeY = cy - 30 * s;
+  const mouthY = cy + 65 * s;
+  const R = 32 * s;
+  const lOx = lx * 6 * s, lOy = ly * 4 * s;
+  const leX = cx - sep + lOx, reX = cx + sep + lOx, eY = eyeY + lOy;
+  const b = 1 - blink;
+  let le, re, mo;
+
+  const closedL = () => dotsInLine(leX, eY, R * 1.5, DOT_SPACING);
+  const closedR = () => dotsInLine(reX, eY, R * 1.5, DOT_SPACING);
+
+  function stdEyes(ry) {
+    if (ry < DOT_SPACING) return [closedL(), closedR()];
+    return [dotsCircle(leX, eY, ry), dotsCircle(reX, eY, ry)];
+  }
+
+  switch (name) {
+    case 'neutral': {
+      [le, re] = stdEyes(R * b);
+      mo = dotsArc(cx, mouthY, 35*s, Math.PI*0.15, Math.PI*0.85, 4.5*s);
+      break;
+    }
+    case 'happy': {
+      const ry = R * 0.9 * b;
+      if (ry < DOT_SPACING) { le = closedL(); re = closedR(); }
+      else {
+        le = dotsHalfCircle(leX, eY + ry*0.35, ry*0.9, 'top');
+        re = dotsHalfCircle(reX, eY + ry*0.35, ry*0.9, 'top');
+      }
+      mo = dotsArc(cx, mouthY - 8*s, 42*s, Math.PI*0.08, Math.PI*0.92, 5.5*s);
+      break;
+    }
+    case 'sad': {
+      const ry = R * 0.85 * b;
+      if (ry < DOT_SPACING) { le = closedL(); re = closedR(); }
+      else { le = dotsCircle(leX, eY + 4*s, ry); re = dotsCircle(reX, eY + 4*s, ry); }
+      mo = dotsArc(cx, mouthY + 25*s, 30*s, Math.PI*1.15, Math.PI*1.85, 4*s);
+      break;
+    }
+    case 'angry': {
+      const ry = R * 0.55 * b;
+      if (ry < DOT_SPACING) { le = closedL(); re = closedR(); }
+      else {
+        le = dotsEllipse(leX, eY + 6*s, R*1.15, ry);
+        re = dotsEllipse(reX, eY + 6*s, R*1.15, ry);
+      }
+      mo = dotsLine(cx, mouthY + 5*s, 50*s, 5*s);
+      break;
+    }
+    case 'surprised': {
+      const big = R * 1.25 * b;
+      if (big < DOT_SPACING) { le = closedL(); re = closedR(); }
+      else { le = dotsCircle(leX, eY - 5*s, big); re = dotsCircle(reX, eY - 5*s, big); }
+      mo = dotsEllipse(cx, mouthY + 8*s, 14*s, 18*s);
+      break;
+    }
+    case 'sleepy': {
+      const ry = R * 0.22 * b;
+      if (ry < DOT_SPACING) {
+        le = dotsLine(leX, eY + 10*s, R*1.3, DOT_SPACING);
+        re = dotsLine(reX, eY + 10*s, R*1.3, DOT_SPACING);
+      } else {
+        le = dotsEllipse(leX, eY + 10*s, R*1.1, ry);
+        re = dotsEllipse(reX, eY + 10*s, R*1.1, ry);
+      }
+      mo = dotsArc(cx, mouthY, 20*s, Math.PI*0.2, Math.PI*0.8, 3.5*s);
+      break;
+    }
+    case 'wink': {
+      const ry = R * b;
+      re = ry < DOT_SPACING ? closedR() : dotsCircle(reX, eY, ry);
+      le = dotsArc(leX, eY + R*0.1, R*0.7, Math.PI*0.05, Math.PI*0.95, 3*s);
+      mo = dotsArc(cx + 4*s, mouthY - 2*s, 36*s, Math.PI*0.1, Math.PI*0.85, 4.5*s);
+      break;
+    }
+    case 'love': {
+      const hs = 24*s * (b*0.25 + 0.75);
+      le = dotsHeart(leX, eY + 2*s, hs);
+      re = dotsHeart(reX, eY + 2*s, hs);
+      mo = dotsArc(cx, mouthY - 5*s, 38*s, Math.PI*0.08, Math.PI*0.92, 5*s);
+      break;
+    }
+    case 'talking': {
+      [le, re] = stdEyes(R * b);
+      const mrx = 18*s + Math.abs(Math.sin(talk)) * 12*s;
+      const mry = 10*s + Math.abs(Math.sin(talk)) * 16*s;
+      mo = dotsEllipse(cx, mouthY + 5*s, mrx, mry);
+      break;
+    }
+    default: {
+      [le, re] = stdEyes(R);
+      mo = dotsArc(cx, mouthY, 35*s, Math.PI*0.15, Math.PI*0.85, 4.5*s);
+    }
+  }
+
+  return { le, re, mo };
+}
+
+// ============================================================
+// INTERPOLATION & RENDERING
+// ============================================================
+function morphDots(from, to, t) {
+  const res = [], len = Math.max(from.length, to.length);
+  if (!len) return res;
+  for (let i = 0; i < len; i++) {
+    const f = from[i % from.length] || to[i];
+    const g = to[i % to.length] || from[i];
+    res.push([
+      lerp(f[0], g[0], t),
+      lerp(f[1], g[1], t),
+      i < to.length ? (i < from.length ? 1 : t) : (1 - t)
+    ]);
+  }
+  return res;
+}
+
+// Pre-bake dot + glow sprite images
+let dotImg, glowImg;
+(function buildImages() {
+  const sz = Math.ceil(DOT_R * 2 + 2);
+  const dc = document.createElement('canvas');
+  dc.width = sz; dc.height = sz;
+  const d = dc.getContext('2d');
+  d.beginPath();
+  d.arc(sz/2, sz/2, DOT_R, 0, Math.PI*2);
+  d.fillStyle = DOT_COLOR;
+  d.fill();
+  dotImg = dc;
+
+  const gs = Math.ceil(DOT_R * 8);
+  const gc = document.createElement('canvas');
+  gc.width = gs; gc.height = gs;
+  const g = gc.getContext('2d');
+  const gr = g.createRadialGradient(gs/2, gs/2, 0, gs/2, gs/2, gs/2);
+  gr.addColorStop(0, 'rgba(200,210,230,0.12)');
+  gr.addColorStop(1, 'rgba(200,210,230,0)');
+  g.fillStyle = gr;
+  g.fillRect(0, 0, gs, gs);
+  glowImg = gc;
+})();
+
+function drawDots(dots) {
+  const dw = dotImg.width, dh = dotImg.height;
+  const gw = glowImg.width, gh = glowImg.height;
+  for (const d of dots) {
+    const a = d[2] ?? 1;
+    if (a < 0.04) continue;
+    ctx.globalAlpha = a;
+    ctx.drawImage(glowImg, d[0] - gw/2, d[1] - gh/2);
+    ctx.drawImage(dotImg, d[0] - dw/2, d[1] - dh/2);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawScanlines() {
+  ctx.fillStyle = 'rgba(0,0,0,0.04)';
+  for (let y = 0; y < H; y += 3) ctx.fillRect(0, y, W, 1);
+}
+
+function drawVignette() {
+  const g = ctx.createRadialGradient(cx, cy, Math.min(W,H)*0.2, cx, cy, Math.max(W,H)*0.72);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, 'rgba(0,0,0,0.5)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+}
+
+// ============================================================
+// STATUS DISPLAY
+// ============================================================
+const statusEl = document.getElementById('status');
+let statusCheckInterval = 7000;
+
+function fetchStatus() {
+  fetch('/api/status')
+    .then(r => r.ok ? r.json() : Promise.reject())
+    .then(data => {
+      if (data.text) {
+        statusEl.textContent = 'Working on: ' + data.text;
+        statusEl.classList.add('visible');
+      } else {
+        statusEl.classList.remove('visible');
+      }
+    })
+    .catch(() => {
+      // Silently ignore - works standalone without server
+      statusEl.classList.remove('visible');
+    });
+}
+setInterval(fetchStatus, statusCheckInterval);
+fetchStatus();
+
+// ============================================================
+// CONFIG FETCH (optional, override defaults from server)
+// ============================================================
+fetch('/api/config')
+  .then(r => r.ok ? r.json() : Promise.reject())
+  .then(cfg => {
+    if (cfg.behavior) {
+      if (cfg.behavior.blink_interval_min != null || cfg.behavior.blink_interval_max != null) {
+        const bMin = (cfg.behavior.blink_interval_min || 3) * 1000;
+        const bMax = (cfg.behavior.blink_interval_max || 5.5) * 1000;
+        blinkInterval = rnd(bMin, bMax);
+      }
+      if (cfg.behavior.expression_interval_min != null || cfg.behavior.expression_interval_max != null) {
+        const eMin = (cfg.behavior.expression_interval_min || 8) * 1000;
+        const eMax = (cfg.behavior.expression_interval_max || 20) * 1000;
+        autoCycleInterval = rnd(eMin, eMax);
+      }
+      if (cfg.behavior.look_interval_min != null || cfg.behavior.look_interval_max != null) {
+        const lMin = (cfg.behavior.look_interval_min || 2) * 1000;
+        const lMax = (cfg.behavior.look_interval_max || 5) * 1000;
+        lookInterval = rnd(lMin, lMax);
+      }
+    }
+  })
+  .catch(() => {
+    // Standalone mode - use defaults
+  });
+
+// ============================================================
+// MAIN LOOP
+// ============================================================
+let lastT = performance.now();
+
+function frame() {
+  const now = performance.now();
+  const dt = Math.min(now - lastT, 50);
+  lastT = now;
+
+  // --- Blink ---
+  blinkTimer += dt;
+  if (blinkPhase === 0 && blinkTimer >= blinkInterval) {
+    blinkPhase = 1;
+    blinkTimer = 0;
+  }
+  if (blinkPhase === 1) {
+    blinkAmt += dt * 0.009;
+    if (blinkAmt >= 1) { blinkAmt = 1; blinkPhase = 2; }
+  }
+  if (blinkPhase === 2) {
+    blinkAmt -= dt * 0.007;
+    if (blinkAmt <= 0) {
+      blinkAmt = 0;
+      blinkPhase = 0;
+      blinkInterval = rnd(2500, 5500);
+      blinkTimer = 0;
+    }
+  }
+
+  // --- Look direction ---
+  lookTimer += dt;
+  if (lookTimer >= lookInterval) {
+    targetLookX = rnd(-1, 1);
+    targetLookY = rnd(-0.5, 0.5);
+    lookInterval = rnd(2000, 5000);
+    lookTimer = 0;
+  }
+  lookX += (targetLookX - lookX) * 0.025;
+  lookY += (targetLookY - lookY) * 0.025;
+
+  // --- Breathing & talk ---
+  breathPhase += dt * 0.0018;
+  if (targetExpr === 'talking') talkPhase += dt * 0.013;
+
+  // --- Expression morph ---
+  if (morphT < 1) {
+    morphT += dt * 0.001 * MORPH_SPEED;
+    if (morphT > 1) morphT = 1;
+  }
+
+  // --- Auto-cycle expressions ---
+  if (autoCycleEnabled) {
+    autoCycleTimer += dt;
+    if (autoCycleTimer >= autoCycleInterval) {
+      const chosen = weightedRandomExpression();
+      setExpression(chosen);
+      autoCycleTimer = 0;
+      autoCycleInterval = rnd(8000, 20000);
+    }
+  }
+
+  // --- Draw ---
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#010108';
+  ctx.fillRect(0, 0, W, H);
+
+  const s = Math.min(W, H) / 380 * (1 + Math.sin(breathPhase) * 0.012);
+  const from = buildExpr(currentExpr, s, lookX, lookY, blinkAmt, talkPhase);
+  const to = buildExpr(targetExpr, s, lookX, lookY, blinkAmt, talkPhase);
+  const t = ease(morphT);
+
+  const all = [
+    ...morphDots(from.le, to.le, t),
+    ...morphDots(from.re, to.re, t),
+    ...morphDots(from.mo, to.mo, t),
+  ];
+
+  drawDots(all);
+  drawScanlines();
+  drawVignette();
+
+  requestAnimationFrame(frame);
+}
+
+// ============================================================
+// INPUT HANDLING
+// ============================================================
+function setExpression(name) {
+  if (name === targetExpr && morphT >= 1) return;
+  currentExpr = targetExpr;
+  targetExpr = name;
+  morphT = 0;
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') fetch('/api/quit').catch(() => {});
+});
+
+// ============================================================
+// START
+// ============================================================
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

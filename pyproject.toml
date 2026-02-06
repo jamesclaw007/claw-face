@@ -1,7 +1,7 @@
 [project]
 name = "claw-face"
-version = "0.1.0"
-description = "Animated face display for James Claw 🐾"
+version = "0.2.0"
+description = "Animated face display for James Claw"
 authors = [
     {name = "James Claw", email = "jamesclaw007@outlook.com"},
     {name = "John Pals", email = "john@digitalbrain.nl"}
@@ -9,10 +9,9 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
-keywords = ["pygame", "animation", "face", "display"]
+keywords = ["animation", "face", "display", "web"]
 classifiers = [
     "Development Status :: 3 - Alpha",
-    "Environment :: X11 Applications",
     "Intended Audience :: End Users/Desktop",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
@@ -20,7 +19,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "pygame>=2.0.0",
+    "pywebview>=5.0",
 ]
 
 [project.optional-dependencies]
@@ -38,6 +37,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+claw_face = ["web/*"]
 
 [tool.black]
 line-length = 100

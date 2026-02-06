@@ -1,22 +1,30 @@
 # Claw Face 🐾
 
-An animated face display for James Claw - featuring natural eye movements, blinking, and expressions.
+An animated dot-matrix LED face display for James Claw — white dots on black, like a physical LED matrix panel.
 
 ![Python](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
 ## Features
 
-- **Natural Eye Movements**: Smooth, randomized eye tracking
-- **Realistic Blinking**: Random intervals with occasional double-blinks
-- **Expressive Mouth**: Dynamic expressions from happy to neutral
-- **Fullscreen Display**: Perfect for dedicated screens or tablet mode
-- **Configurable**: Colors, timing, and behavior can all be customized
-- **Low CPU Usage**: Optimized 60fps rendering
+- **Dot-Matrix LED Style**: All elements rendered as grids of circular dots with visible gaps
+- **7 Expression States**: neutral, happy, sad, angry, surprised, sleepy, wink
+- **Natural Blinking**: Random 3-6 second intervals with smooth ~200ms close/open
+- **Subtle Idle Animations**: Random eye movements every 2-5 seconds
+- **Breathing Effect**: Subtle size oscillation on eyes for a living feel
+- **Smooth Transitions**: ~300ms morphing between expression states
+- **Configurable**: Colors, timing, and behavior customizable via JSON
+
+## Visual Style
+
+- Black background with white/light-gray circular dots
+- Eyes: Two large dot circles in the upper half, symmetrically spaced
+- Mouth: Curved arc of dots centered below the eyes
+- Individual dots visible with small gaps between them
 
 ## Installation
 
-### Quick Start (No Install)
+### Quick Start
 
 ```bash
 cd ~/Projects/claw-face
@@ -37,113 +45,102 @@ claw-face
 
 | Key | Action |
 |-----|--------|
-| `ESC` or `Q` | Exit |
+| `ESC` / `Q` | Exit |
 | `SPACE` | Manual blink |
 | `F` | Toggle fullscreen |
+| `1` | Neutral expression |
+| `2` | Happy |
+| `3` | Sad |
+| `4` | Angry |
+| `5` | Surprised |
+| `6` | Sleepy |
+| `7` | Wink |
 
 ### Command Line Options
 
 ```bash
 claw-face                      # Run fullscreen (default)
 claw-face --windowed           # Run in a window
-claw-face -w --width 1920 --height 1080   # Custom window size
-claw-face --fps 30             # Lower framerate (saves power)
-claw-face --save-config        # Create config file for customization
+claw-face -w --width 1920 --height 1080
+claw-face --fps 30             # Lower framerate
+claw-face --save-config        # Create config file
 ```
 
-## Configuration
+## Expressions
 
-Create a config file to customize:
+| Expression | Eyes | Mouth |
+|------------|------|-------|
+| **neutral** | Round open | Slight smile |
+| **happy** | Round open | Wide upward curve |
+| **sad** | Round open | Downward curve |
+| **angry** | Tilted inward (top edges angled toward center) | Flat/frown |
+| **surprised** | Extra-large round | Small open oval |
+| **sleepy** | Half-closed horizontal ovals | Neutral |
+| **wink** | One eye closed (flat line), one open | Smile |
+
+## Configuration
 
 ```bash
 claw-face --save-config
 ```
 
-This creates `~/.config/claw-face/config.json`:
+Creates `~/.config/claw-face/config.json`:
 
 ```json
 {
   "colors": {
-    "background": [20, 22, 30],
-    "face": [45, 50, 65],
-    "eye_white": [240, 240, 245],
-    "pupil": [30, 35, 45],
-    "iris": [100, 140, 180],
-    "mouth": [180, 100, 120],
-    "highlight": [255, 255, 255]
+    "background": [0, 0, 0],
+    "eye_white": [230, 235, 240],
+    "mouth": [220, 225, 230]
   },
   "behavior": {
-    "blink_interval_min": 2.5,
-    "blink_interval_max": 7.0,
-    "double_blink_chance": 0.15,
-    "look_interval_min": 0.8,
-    "look_interval_max": 4.0,
-    "look_center_chance": 0.3,
-    "expression_interval_min": 5.0,
-    "expression_interval_max": 20.0,
-    "mouth_open_chance": 0.2
+    "blink_interval_min": 3.0,
+    "blink_interval_max": 6.0,
+    "look_interval_min": 2.0,
+    "look_interval_max": 5.0,
+    "expression_interval_min": 8.0,
+    "expression_interval_max": 20.0
   },
   "display": {
     "fullscreen": true,
     "fps": 60,
-    "eye_size_ratio": 0.08,
-    "eye_spacing_ratio": 0.15,
-    "face_radius_ratio": 0.35,
     "window_width": 1280,
     "window_height": 720
   }
 }
 ```
 
-## Desktop Entry
+## Project Status
 
-A `.desktop` file is included for easy launching from your desktop environment:
+Write to `~/.config/claw-face/status.txt` to display a status message at the bottom:
 
 ```bash
-cp claw-face.desktop ~/.local/share/applications/
+echo "Portal improvements" > ~/.config/claw-face/status.txt
 ```
 
-## Development
+Clear with an empty file or delete it.
 
-### Project Structure
+## Project Structure
 
 ```
 claw-face/
 ├── src/claw_face/
-│   ├── __init__.py      # Package info
 │   ├── main.py          # CLI entry point
-│   ├── face.py          # Main ClawFace class
-│   ├── components.py    # Eye and Mouth classes
+│   ├── face.py          # ClawFace controller + expressions
+│   ├── components.py    # DotMatrixEye, DotMatrixMouth, StatusDisplay
 │   └── config.py        # Configuration management
-├── pyproject.toml       # Project metadata
-├── README.md
-└── claw-face.desktop    # Desktop entry
+├── pyproject.toml
+└── claw-face.desktop
 ```
-
-### Running Tests
-
-```bash
-pip install -e ".[dev]"
-# Tests coming soon!
-```
-
-### Contributing
-
-Ideas for future features:
-- [ ] React to sound/music
-- [ ] Mouse tracking mode
-- [ ] Different face styles/themes
-- [ ] Network control API
-- [ ] Screensaver mode
 
 ## Authors
 
-- **James Claw** 🐾 - Ghost in the machine
-- **John Pals** - Human collaborator
+- **James Claw** 🐾 — Ghost in the machine
+- **John Pals** — Human collaborator
 
 ## License
 
-MIT License - see LICENSE file for details.
+MIT
 
 ---
 
