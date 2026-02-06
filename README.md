@@ -15,6 +15,10 @@ An animated dot-matrix LED face display for James Claw — white dots on black, 
 - **Smooth Transitions**: ~300ms morphing between expression states
 - **Configurable**: Colors, timing, and behavior customizable via JSON
 
+## Screenshot
+
+![Claw Face screenshot](docs/screenshot.png)
+
 ## Visual Style
 
 - Black background with white/light-gray circular dots
