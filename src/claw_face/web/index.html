@@ -64,7 +64,7 @@ function resize() {
   canvas.width = W;
   canvas.height = H;
   cx = W / 2;
-  cy = H / 2;
+  cy = H / 2 - H * 0.06;
 }
 window.addEventListener('resize', resize);
 resize();
