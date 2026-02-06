@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Claw Face
+Comment=Animated face display for James 🐾
+Exec=python3 -m src.claw_face.main
+Path=/home/james/Projects/claw-face
+Icon=face-smile
+Terminal=false
+Type=Application
+Categories=Graphics;
+Keywords=face;animation;display;eyes;
