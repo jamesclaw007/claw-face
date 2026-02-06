@@ -33,7 +33,12 @@ class Behavior:
 @dataclass
 class Display:
     """Display / server configuration."""
+    host: str = "127.0.0.1"
     port: int = 8420
+    fullscreen: bool = True
+    fps: int = 30
+    window_width: int = 1280
+    window_height: int = 720
 
 
 def _safe_init(cls, data: dict):

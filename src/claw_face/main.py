@@ -28,6 +28,8 @@ Examples:
   claw-face                    # Native fullscreen window (default)
   claw-face --browser          # Open in system browser instead
   claw-face --headless         # Server only, no window
+  claw-face --windowed         # Webview in a resizable window
+  claw-face --fps 20           # Lower framerate (kiosk power savings)
   claw-face --save-config      # Save default config to edit
 """
     )
@@ -38,6 +40,12 @@ Examples:
         version=f"Claw Face {__version__}"
     )
 
+    parser.add_argument(
+        "--host",
+        type=str,
+        default=None,
+        help="HTTP server host/interface (default: 127.0.0.1)"
+    )
     parser.add_argument(
         "--port",
         type=int,
@@ -55,6 +63,30 @@ Examples:
         "--headless",
         action="store_true",
         help="Run server only, no window or browser"
+    )
+
+    parser.add_argument(
+        "--windowed",
+        action="store_true",
+        help="Run native windowed mode (disables fullscreen in webview mode)"
+    )
+    parser.add_argument(
+        "--width",
+        type=int,
+        default=None,
+        help="Window width for --windowed (default from config)"
+    )
+    parser.add_argument(
+        "--height",
+        type=int,
+        default=None,
+        help="Window height for --windowed (default from config)"
+    )
+    parser.add_argument(
+        "--fps",
+        type=int,
+        default=None,
+        help="Target FPS for animation (default from config)"
     )
 
     parser.add_argument(
@@ -92,8 +124,18 @@ def main():
         config = Config.load()
 
     # Apply command line overrides
+    if args.host is not None:
+        config.display.host = args.host
     if args.port is not None:
         config.display.port = args.port
+    if args.windowed:
+        config.display.fullscreen = False
+    if args.width is not None:
+        config.display.window_width = args.width
+    if args.height is not None:
+        config.display.window_height = args.height
+    if args.fps is not None:
+        config.display.fps = args.fps
 
     # Determine display mode
     if args.browser:

@@ -54,7 +54,8 @@ const ctx = canvas.getContext('2d');
 
 const DOT_R = 1.6;
 const DOT_SPACING = 4.2;
-const DOT_COLOR = '#d8dce8';
+let DOT_COLOR = '#d8dce8';
+let BG_COLOR = '#010108';
 
 let W, H, cx, cy;
 
@@ -109,11 +110,15 @@ const MORPH_SPEED = 3.5;
 
 // Blink
 let blinkAmt = 0, blinkPhase = 0, blinkTimer = 0;
-let blinkInterval = rnd(3000, 5500);
+let blinkMinMs = 3000;
+let blinkMaxMs = 5500;
+let blinkInterval = rnd(blinkMinMs, blinkMaxMs);
 
 // Look direction
 let lookX = 0, lookY = 0, targetLookX = 0, targetLookY = 0;
 let lookTimer = 0, lookInterval = rnd(2000, 5000);
+let lookMinMs = 2000;
+let lookMaxMs = 5000;
 
 // Breathing & talk
 let breathPhase = 0, talkPhase = 0;
@@ -135,7 +140,9 @@ const EXPRESSION_WEIGHTS = {
 
 let autoCycleEnabled = true;
 let autoCycleTimer = 0;
-let autoCycleInterval = rnd(8000, 20000);
+let exprMinMs = 8000;
+let exprMaxMs = 20000;
+let autoCycleInterval = rnd(exprMinMs, exprMaxMs);
 
 function weightedRandomExpression() {
   const names = Object.keys(EXPRESSION_WEIGHTS);
@@ -424,25 +431,42 @@ fetchStatus();
 // ============================================================
 // CONFIG FETCH (optional, override defaults from server)
 // ============================================================
+function rgb(arr, fallback) {
+  if (!Array.isArray(arr) || arr.length < 3) return fallback;
+  const r = Math.max(0, Math.min(255, arr[0] | 0));
+  const g = Math.max(0, Math.min(255, arr[1] | 0));
+  const b = Math.max(0, Math.min(255, arr[2] | 0));
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
 fetch('/api/config')
   .then(r => r.ok ? r.json() : Promise.reject())
   .then(cfg => {
+    if (cfg.colors) {
+      if (cfg.colors.background) BG_COLOR = rgb(cfg.colors.background, BG_COLOR);
+      if (cfg.colors.eye_white) DOT_COLOR = rgb(cfg.colors.eye_white, DOT_COLOR);
+    }
     if (cfg.behavior) {
       if (cfg.behavior.blink_interval_min != null || cfg.behavior.blink_interval_max != null) {
-        const bMin = (cfg.behavior.blink_interval_min || 3) * 1000;
-        const bMax = (cfg.behavior.blink_interval_max || 5.5) * 1000;
-        blinkInterval = rnd(bMin, bMax);
+        blinkMinMs = (cfg.behavior.blink_interval_min || 3) * 1000;
+        blinkMaxMs = (cfg.behavior.blink_interval_max || 5.5) * 1000;
+        blinkInterval = rnd(blinkMinMs, blinkMaxMs);
       }
       if (cfg.behavior.expression_interval_min != null || cfg.behavior.expression_interval_max != null) {
-        const eMin = (cfg.behavior.expression_interval_min || 8) * 1000;
-        const eMax = (cfg.behavior.expression_interval_max || 20) * 1000;
-        autoCycleInterval = rnd(eMin, eMax);
+        exprMinMs = (cfg.behavior.expression_interval_min || 8) * 1000;
+        exprMaxMs = (cfg.behavior.expression_interval_max || 20) * 1000;
+        autoCycleInterval = rnd(exprMinMs, exprMaxMs);
       }
       if (cfg.behavior.look_interval_min != null || cfg.behavior.look_interval_max != null) {
-        const lMin = (cfg.behavior.look_interval_min || 2) * 1000;
-        const lMax = (cfg.behavior.look_interval_max || 5) * 1000;
-        lookInterval = rnd(lMin, lMax);
+        lookMinMs = (cfg.behavior.look_interval_min || 2) * 1000;
+        lookMaxMs = (cfg.behavior.look_interval_max || 5) * 1000;
+        lookInterval = rnd(lookMinMs, lookMaxMs);
       }
+    }
+    if (cfg.display && cfg.display.fps != null) {
+      const fps = Math.max(1, Math.min(240, cfg.display.fps | 0));
+      TARGET_FPS = fps;
+      FRAME_TIME = 1000 / TARGET_FPS;
     }
   })
   .catch(() => {
@@ -450,10 +474,37 @@ fetch('/api/config')
   });
 
 // ============================================================
+// COMMAND FETCH (optional: external control via command.json)
+// ============================================================
+const KNOWN_EXPRS = new Set([
+  'neutral', 'happy', 'sad', 'angry', 'surprised', 'sleepy', 'wink', 'love', 'talking'
+]);
+
+function fetchCommand() {
+  fetch('/api/command')
+    .then(r => r.ok ? r.json() : Promise.reject())
+    .then(cmd => {
+      if (cmd && typeof cmd === 'object') {
+        if (typeof cmd.expression === 'string' && KNOWN_EXPRS.has(cmd.expression)) {
+          setExpression(cmd.expression);
+        }
+        if (typeof cmd.auto_cycle === 'boolean') {
+          autoCycleEnabled = cmd.auto_cycle;
+          autoCycleTimer = 0;
+        }
+      }
+    })
+    .catch(() => {
+      // Standalone mode - ignore
+    });
+}
+setInterval(fetchCommand, 1000);
+
+// ============================================================
 // MAIN LOOP (throttled to 30fps)
 // ============================================================
-const TARGET_FPS = 30;
-const FRAME_TIME = 1000 / TARGET_FPS;
+let TARGET_FPS = 30;
+let FRAME_TIME = 1000 / TARGET_FPS;
 let lastT = performance.now();
 let accumulator = 0;
 
@@ -486,7 +537,7 @@ function frame() {
     if (blinkAmt <= 0) {
       blinkAmt = 0;
       blinkPhase = 0;
-      blinkInterval = rnd(2500, 5500);
+      blinkInterval = rnd(blinkMinMs, blinkMaxMs);
       blinkTimer = 0;
     }
   }
@@ -496,7 +547,7 @@ function frame() {
   if (lookTimer >= lookInterval) {
     targetLookX = rnd(-1, 1);
     targetLookY = rnd(-0.5, 0.5);
-    lookInterval = rnd(2000, 5000);
+    lookInterval = rnd(lookMinMs, lookMaxMs);
     lookTimer = 0;
   }
   lookX += (targetLookX - lookX) * 0.05;
@@ -519,13 +570,13 @@ function frame() {
       const chosen = weightedRandomExpression();
       setExpression(chosen);
       autoCycleTimer = 0;
-      autoCycleInterval = rnd(8000, 20000);
+      autoCycleInterval = rnd(exprMinMs, exprMaxMs);
     }
   }
 
   // --- Draw ---
   ctx.clearRect(0, 0, W, H);
-  ctx.fillStyle = '#010108';
+  ctx.fillStyle = BG_COLOR;
   ctx.fillRect(0, 0, W, H);
   // Build geometry at base scale, apply breathing via canvas transform
   const baseS = Math.min(W, H) / 260;
@@ -564,8 +615,67 @@ function setExpression(name) {
   morphT = 0;
 }
 
+function manualBlink() {
+  // Trigger a blink ASAP if not already blinking.
+  if (blinkPhase === 0) {
+    blinkPhase = 1;
+    blinkTimer = 0;
+  }
+}
+
+function toggleFullscreen() {
+  // Browser fullscreen first; if unsupported (or running in pywebview), ask the server.
+  const el = document.documentElement;
+  const can = !!(el.requestFullscreen && document.exitFullscreen);
+  if (can) {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    } else {
+      el.requestFullscreen().catch(() => {
+        fetch('/api/fullscreen/toggle').catch(() => {});
+      });
+    }
+    return;
+  }
+  fetch('/api/fullscreen/toggle').catch(() => {});
+}
+
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') fetch('/api/quit').catch(() => {});
+  const k = e.key;
+  if (k === 'Escape' || k === 'q' || k === 'Q') {
+    fetch('/api/quit').catch(() => {});
+    return;
+  }
+  if (k === ' ') {
+    autoCycleEnabled = !autoCycleEnabled;
+    autoCycleTimer = 0;
+    return;
+  }
+  if (k === 'b' || k === 'B') {
+    manualBlink();
+    return;
+  }
+  if (k === 'f' || k === 'F') {
+    toggleFullscreen();
+    return;
+  }
+
+  // Expression hotkeys: 1-9
+  const exprs = [
+    'neutral',
+    'happy',
+    'sad',
+    'angry',
+    'surprised',
+    'sleepy',
+    'wink',
+    'love',
+    'talking',
+  ];
+  const n = (k && k.length === 1) ? (k.charCodeAt(0) - 48) : -1;
+  if (n >= 1 && n <= exprs.length) {
+    setExpression(exprs[n - 1]);
+  }
 });
 
 // ============================================================

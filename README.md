@@ -46,7 +46,8 @@ claw-face
 | Key | Action |
 |-----|--------|
 | `ESC` / `Q` | Exit |
-| `SPACE` | Manual blink |
+| `SPACE` | Toggle auto-cycling |
+| `B` | Manual blink |
 | `F` | Toggle fullscreen |
 | `1` | Neutral expression |
 | `2` | Happy |
@@ -55,14 +56,19 @@ claw-face
 | `5` | Surprised |
 | `6` | Sleepy |
 | `7` | Wink |
+| `8` | Love |
+| `9` | Talking |
 
 ### Command Line Options
 
 ```bash
-claw-face                      # Run fullscreen (default)
-claw-face --windowed           # Run in a window
-claw-face -w --width 1920 --height 1080
-claw-face --fps 30             # Lower framerate
+claw-face                      # Native window (fullscreen by default)
+claw-face --windowed           # Native windowed mode (no fullscreen)
+claw-face --width 1920 --height 1080
+claw-face --fps 30             # Target framerate for animation
+claw-face --host 0.0.0.0       # Bind to all interfaces (for remote control)
+claw-face --browser            # Open in system browser
+claw-face --headless           # Server only, no window
 claw-face --save-config        # Create config file
 ```
 
@@ -102,8 +108,10 @@ Creates `~/.config/claw-face/config.json`:
     "expression_interval_max": 20.0
   },
   "display": {
+    "host": "127.0.0.1",
+    "port": 8420,
     "fullscreen": true,
-    "fps": 60,
+    "fps": 30,
     "window_width": 1280,
     "window_height": 720
   }
@@ -120,15 +128,28 @@ echo "Portal improvements" > ~/.config/claw-face/status.txt
 
 Clear with an empty file or delete it.
 
+## External Control (OpenClaw Integration)
+
+Write `~/.config/claw-face/command.json` to control the face from another process (polled once per second):
+
+```json
+{
+  "expression": "happy",
+  "auto_cycle": false
+}
+```
+
+Valid `expression` values: `neutral`, `happy`, `sad`, `angry`, `surprised`, `sleepy`, `wink`, `love`, `talking`.
+
 ## Project Structure
 
 ```
 claw-face/
 ├── src/claw_face/
 │   ├── main.py          # CLI entry point
-│   ├── face.py          # ClawFace controller + expressions
-│   ├── components.py    # DotMatrixEye, DotMatrixMouth, StatusDisplay
-│   └── config.py        # Configuration management
+│   ├── server.py        # Local HTTP server + API endpoints
+│   ├── config.py        # Configuration management
+│   └── web/             # Canvas face UI (HTML/JS)
 ├── pyproject.toml
 └── claw-face.desktop
 ```
