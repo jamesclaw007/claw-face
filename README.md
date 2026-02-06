@@ -130,6 +130,45 @@ Clear with an empty file or delete it.
 
 ## External Control (OpenClaw Integration)
 
+This repo includes an OpenClaw skill and an OpenClaw hook:
+
+- Skill: lets the agent explicitly set the face/status.
+- Hook: automatically updates the face based on OpenClaw gateway events (default behavior).
+
+### Install The OpenClaw Skill
+
+The skill lives in `skills/openclaw-claw-face/`.
+
+```bash
+cd /path/to/claw-face
+openclaw config set skills.load.extraDirs "[\"$(pwd)/skills\"]"
+openclaw gateway restart
+openclaw skills info claw-face-display
+```
+
+### Install The OpenClaw Hook (Automatic Updates)
+
+The hook lives in `hooks/claw-face-auto/`.
+
+Copy it into OpenClaw's managed hooks directory, enable it, then restart the gateway:
+
+```bash
+cd /path/to/claw-face
+mkdir -p ~/.openclaw/hooks/claw-face-auto
+cp -a "$(pwd)/hooks/claw-face-auto/"* ~/.openclaw/hooks/claw-face-auto/
+openclaw hooks enable claw-face-auto
+openclaw gateway restart
+```
+
+Verify:
+
+```bash
+openclaw hooks info claw-face-auto
+openclaw hooks check
+```
+
+### Manual External Control (No OpenClaw Required)
+
 Write `~/.config/claw-face/command.json` to control the face from another process (polled once per second):
 
 ```json
