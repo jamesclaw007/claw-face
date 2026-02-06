@@ -58,6 +58,9 @@ const DOT_COLOR = '#d8dce8';
 
 let W, H, cx, cy;
 
+// Cached vignette + scanline overlay
+let overlayCanvas, overlayCtx;
+
 function resize() {
   W = window.innerWidth;
   H = window.innerHeight;
@@ -65,7 +68,27 @@ function resize() {
   canvas.height = H;
   cx = W / 2;
   cy = H / 2 - H * 0.06;
+
+  // Pre-render static overlay (vignette + scanlines)
+  overlayCanvas = document.createElement('canvas');
+  overlayCanvas.width = W;
+  overlayCanvas.height = H;
+  overlayCtx = overlayCanvas.getContext('2d');
+  _renderOverlay();
 }
+
+function _renderOverlay() {
+  // Scanlines
+  overlayCtx.fillStyle = 'rgba(0,0,0,0.04)';
+  for (let y = 0; y < H; y += 3) overlayCtx.fillRect(0, y, W, 1);
+  // Vignette
+  const g = overlayCtx.createRadialGradient(cx, cy, Math.min(W,H)*0.2, cx, cy, Math.max(W,H)*0.72);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, 'rgba(0,0,0,0.5)');
+  overlayCtx.fillStyle = g;
+  overlayCtx.fillRect(0, 0, W, H);
+}
+
 window.addEventListener('resize', resize);
 resize();
 
@@ -349,55 +372,28 @@ function morphDots(from, to, t) {
   return res;
 }
 
-// Pre-bake dot + glow sprite images
-let dotImg, glowImg;
-(function buildImages() {
-  const sz = Math.ceil(DOT_R * 2 + 2);
-  const dc = document.createElement('canvas');
-  dc.width = sz; dc.height = sz;
-  const d = dc.getContext('2d');
-  d.beginPath();
-  d.arc(sz/2, sz/2, DOT_R, 0, Math.PI*2);
-  d.fillStyle = DOT_COLOR;
-  d.fill();
-  dotImg = dc;
-
-  const gs = Math.ceil(DOT_R * 8);
-  const gc = document.createElement('canvas');
-  gc.width = gs; gc.height = gs;
-  const g = gc.getContext('2d');
-  const gr = g.createRadialGradient(gs/2, gs/2, 0, gs/2, gs/2, gs/2);
-  gr.addColorStop(0, 'rgba(200,210,230,0.12)');
-  gr.addColorStop(1, 'rgba(200,210,230,0)');
-  g.fillStyle = gr;
-  g.fillRect(0, 0, gs, gs);
-  glowImg = gc;
-})();
-
 function drawDots(dots) {
-  const dw = dotImg.width, dh = dotImg.height;
-  const gw = glowImg.width, gh = glowImg.height;
+  // Batch all full-opacity dots into a single path (vast majority of frames)
+  ctx.fillStyle = DOT_COLOR;
+  ctx.beginPath();
   for (const d of dots) {
     const a = d[2] ?? 1;
-    if (a < 0.04) continue;
+    if (a < 0.04 || a <= 0.96) continue;
+    ctx.moveTo(d[0] + DOT_R, d[1]);
+    ctx.arc(d[0], d[1], DOT_R, 0, Math.PI * 2);
+  }
+  ctx.fill();
+
+  // Partially transparent dots during morphing (individual alpha)
+  for (const d of dots) {
+    const a = d[2] ?? 1;
+    if (a < 0.04 || a > 0.96) continue;
     ctx.globalAlpha = a;
-    ctx.drawImage(glowImg, d[0] - gw/2, d[1] - gh/2);
-    ctx.drawImage(dotImg, d[0] - dw/2, d[1] - dh/2);
+    ctx.beginPath();
+    ctx.arc(d[0], d[1], DOT_R, 0, Math.PI * 2);
+    ctx.fill();
   }
   ctx.globalAlpha = 1;
-}
-
-function drawScanlines() {
-  ctx.fillStyle = 'rgba(0,0,0,0.04)';
-  for (let y = 0; y < H; y += 3) ctx.fillRect(0, y, W, 1);
-}
-
-function drawVignette() {
-  const g = ctx.createRadialGradient(cx, cy, Math.min(W,H)*0.2, cx, cy, Math.max(W,H)*0.72);
-  g.addColorStop(0, 'rgba(0,0,0,0)');
-  g.addColorStop(1, 'rgba(0,0,0,0.5)');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, W, H);
 }
 
 // ============================================================
@@ -454,14 +450,26 @@ fetch('/api/config')
   });
 
 // ============================================================
-// MAIN LOOP
+// MAIN LOOP (throttled to 30fps)
 // ============================================================
+const TARGET_FPS = 30;
+const FRAME_TIME = 1000 / TARGET_FPS;
 let lastT = performance.now();
+let accumulator = 0;
 
 function frame() {
   const now = performance.now();
-  const dt = Math.min(now - lastT, 50);
+  const elapsed = now - lastT;
   lastT = now;
+  accumulator += elapsed;
+
+  // Throttle: skip render if not enough time has passed
+  if (accumulator < FRAME_TIME) {
+    requestAnimationFrame(frame);
+    return;
+  }
+  const dt = Math.min(accumulator, 50);
+  accumulator = 0;
 
   // --- Blink ---
   blinkTimer += dt;
@@ -491,8 +499,8 @@ function frame() {
     lookInterval = rnd(2000, 5000);
     lookTimer = 0;
   }
-  lookX += (targetLookX - lookX) * 0.025;
-  lookY += (targetLookY - lookY) * 0.025;
+  lookX += (targetLookX - lookX) * 0.05;
+  lookY += (targetLookY - lookY) * 0.05;
 
   // --- Breathing & talk ---
   breathPhase += dt * 0.0018;
@@ -519,10 +527,11 @@ function frame() {
   ctx.clearRect(0, 0, W, H);
   ctx.fillStyle = '#010108';
   ctx.fillRect(0, 0, W, H);
-
-  const s = Math.min(W, H) / 260 * (1 + Math.sin(breathPhase) * 0.012);
-  const from = buildExpr(currentExpr, s, lookX, lookY, blinkAmt, talkPhase);
-  const to = buildExpr(targetExpr, s, lookX, lookY, blinkAmt, talkPhase);
+  // Build geometry at base scale, apply breathing via canvas transform
+  const baseS = Math.min(W, H) / 260;
+  const breathScale = 1 + Math.sin(breathPhase) * 0.012;
+  const from = buildExpr(currentExpr, baseS, lookX, lookY, blinkAmt, talkPhase);
+  const to = buildExpr(targetExpr, baseS, lookX, lookY, blinkAmt, talkPhase);
   const t = ease(morphT);
 
   const all = [
@@ -531,9 +540,16 @@ function frame() {
     ...morphDots(from.mo, to.mo, t),
   ];
 
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(breathScale, breathScale);
+  ctx.translate(-cx, -cy);
   drawDots(all);
-  drawScanlines();
-  drawVignette();
+  ctx.restore();
+
+  // Cached overlay (scanlines + vignette)
+  ctx.drawImage(overlayCanvas, 0, 0);
+
 
   requestAnimationFrame(frame);
 }
