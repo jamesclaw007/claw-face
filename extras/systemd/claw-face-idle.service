@@ -1,0 +1,13 @@
+[Unit]
+Description=Claw Face idle launcher (GNOME/Wayland)
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/claw-face-idle --idle-seconds auto --port 0
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

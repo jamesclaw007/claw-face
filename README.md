@@ -186,6 +186,55 @@ Write `~/.config/claw-face/command.json` to control the face from another proces
 
 Valid `expression` values: `neutral`, `happy`, `sad`, `angry`, `surprised`, `sleepy`, `wink`, `love`, `talking`.
 
+## Idle Screensaver Mode (GNOME Wayland)
+
+GNOME on Wayland can’t replace the lock screen with a custom screensaver. The supported approach here is:
+
+- Launch Claw Face when you go idle
+- When you exit Claw Face (`ESC`/`Q`), lock GNOME (you then authenticate normally)
+
+This is implemented by `claw-face-idle`, a small daemon that watches GNOME idle time over DBus.
+
+### Install + Run (systemd --user)
+
+1. Install the package (recommended: user editable install):
+
+```bash
+cd ~/Projects/claw-face
+pip install -e . --user
+```
+
+2. Install and enable the service:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp -a extras/systemd/claw-face-idle.service ~/.config/systemd/user/
+
+systemctl --user daemon-reload
+systemctl --user enable --now claw-face-idle.service
+```
+
+3. Check status/logs:
+
+```bash
+systemctl --user status claw-face-idle.service
+journalctl --user -u claw-face-idle.service -f
+```
+
+### Tuning
+
+- To change how long before it starts, edit `~/.config/systemd/user/claw-face-idle.service` and set `--idle-seconds 60` (or whatever you want), then:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user restart claw-face-idle.service
+```
+
+- If GNOME auto-lock triggers before you press `ESC`, adjust:
+  - Settings -> Privacy -> Screen Lock
+
+See: `docs/gnome-wayland-idle-screensaver.md`
+
 ## Project Structure
 
 ```

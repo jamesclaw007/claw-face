@@ -30,6 +30,7 @@ dev = [
 
 [project.scripts]
 claw-face = "claw_face.main:main"
+claw-face-idle = "claw_face.idle:main"
 
 [build-system]
 requires = ["setuptools>=61.0"]

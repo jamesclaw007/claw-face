@@ -139,7 +139,9 @@ def run_server(config: Config, port: int = 8420, mode: str = "webview"):
     host = getattr(config.display, "host", "127.0.0.1")
     # If we bind to all interfaces, pick a sensible loopback URL for the local UI.
     url_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
-    url = f"http://{url_host}:{port}"
+    # If port=0 was used (ephemeral), use the actual bound port.
+    actual_port = int(server.server_address[1])
+    url = f"http://{url_host}:{actual_port}"
 
     if mode == "webview":
         return _run_webview(server, url, config)
