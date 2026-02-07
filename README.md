@@ -8,7 +8,7 @@ An animated dot-matrix LED face display for James Claw — white dots on black, 
 ## Features
 
 - **Dot-Matrix LED Style**: All elements rendered as grids of circular dots with visible gaps
-- **7 Expression States**: neutral, happy, sad, angry, surprised, sleepy, wink
+- **9 Expression States**: neutral, happy, sad, angry, surprised, sleepy, wink, love, talking
 - **Natural Blinking**: Random 3-6 second intervals with smooth ~200ms close/open
 - **Subtle Idle Animations**: Random eye movements every 2-5 seconds
 - **Breathing Effect**: Subtle size oscillation on eyes for a living feel
@@ -136,10 +136,29 @@ Clear with an empty file or delete it.
 
 ## External Control (OpenClaw Integration)
 
-This repo includes an OpenClaw skill and an OpenClaw hook:
+Recommended setup (what you probably want on the OpenClaw laptop):
 
-- Skill: lets the agent explicitly set the face/status.
-- Hook: automatically updates the face based on OpenClaw gateway events (default behavior).
+1. Run `claw-face` as an always-on kiosk (systemd --user).
+2. Install the OpenClaw plugin so the face updates whenever OpenClaw is actually working (messages, tool calls, reply send, errors).
+3. (Optional) Install the OpenClaw skill to let prompts explicitly set the face/status.
+
+This repo also includes a legacy internal OpenClaw hook (limited event coverage) for older setups.
+
+### Install The OpenClaw Plugin (Presence / “Always Working”)
+
+The plugin lives in `plugins/claw-face-presence/` and drives the kiosk using OpenClaw plugin hooks, so the face reliably switches to “working” during tool calls and message send/receive.
+
+```bash
+cd /path/to/claw-face
+openclaw plugins install -l "$(pwd)/plugins/claw-face-presence"
+openclaw plugins enable claw-face-presence
+
+# Disable the legacy internal hook to avoid conflicting writes:
+openclaw hooks disable claw-face-auto
+
+openclaw gateway restart
+openclaw plugins doctor
+```
 
 ### Install The OpenClaw Skill
 
@@ -152,7 +171,7 @@ openclaw gateway restart
 openclaw skills info claw-face-display
 ```
 
-### Install The OpenClaw Hook (Automatic Updates)
+### Legacy: Install The OpenClaw Hook (Limited Automatic Updates)
 
 The hook lives in `hooks/claw-face-auto/`.
 
@@ -185,6 +204,33 @@ Write `~/.config/claw-face/command.json` to control the face from another proces
 ```
 
 Valid `expression` values: `neutral`, `happy`, `sad`, `angry`, `surprised`, `sleepy`, `wink`, `love`, `talking`.
+
+## Always-On Kiosk Mode (systemd --user)
+
+Run Claw Face continuously, then let OpenClaw (plugin/hook/skill) update expression + status.
+
+1. Install the package (recommended: user editable install):
+
+```bash
+cd ~/Projects/claw-face
+pip install -e . --user
+```
+
+2. Install and enable the service:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp -a extras/systemd/claw-face-kiosk.service ~/.config/systemd/user/
+
+systemctl --user daemon-reload
+systemctl --user enable --now claw-face-kiosk.service
+```
+
+If you previously enabled `claw-face-idle.service`, disable it so it doesn't spawn another Claw Face instance:
+
+```bash
+systemctl --user disable --now claw-face-idle.service
+```
 
 ## Idle Screensaver Mode (GNOME Wayland)
 
@@ -244,6 +290,10 @@ claw-face/
 │   ├── server.py        # Local HTTP server + API endpoints
 │   ├── config.py        # Configuration management
 │   └── web/             # Canvas face UI (HTML/JS)
+├── plugins/             # OpenClaw plugins (recommended integration)
+├── hooks/               # OpenClaw internal hooks (legacy integration)
+├── skills/              # OpenClaw skills (explicit control)
+├── extras/systemd/      # systemd --user services (kiosk/idle)
 ├── pyproject.toml
 └── claw-face.desktop
 ```
