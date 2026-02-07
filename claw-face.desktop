@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=Claw Face
 Comment=Animated face display for James 🐾
-Exec=python3 -m src.claw_face.main
+Exec=env PYTHONPATH=src python3 -m claw_face
 Path=/home/james/Projects/claw-face
 Icon=face-smile
 Terminal=false

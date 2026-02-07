@@ -18,12 +18,21 @@ import sys
 import threading
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
-from typing import Optional
+from typing import Any, Optional
+
+Gio: Any = None
+GLib: Any = None
 
 
-def _require_gi() -> None:
+def _load_gi() -> None:
+    """Load PyGObject lazily so importing this module doesn't hard-exit."""
+    global Gio, GLib
+    if Gio is not None and GLib is not None:
+        return
     try:
-        import gi  # noqa: F401
+        import gi  # type: ignore  # noqa: F401
+        from gi.repository import Gio as _Gio
+        from gi.repository import GLib as _GLib  # type: ignore
     except Exception as e:  # pragma: no cover
         print(
             "claw-face-idle requires PyGObject (gi) on Linux.\n"
@@ -32,10 +41,8 @@ def _require_gi() -> None:
             file=sys.stderr,
         )
         raise SystemExit(2)
-
-
-_require_gi()
-from gi.repository import Gio, GLib  # noqa: E402
+    Gio = _Gio
+    GLib = _GLib
 
 
 @dataclass(frozen=True)
@@ -50,6 +57,7 @@ class Settings:
 
 def _get_idle_seconds_from_gsettings() -> int:
     # org.gnome.desktop.session idle-delay is uint32 seconds.
+    _load_gi()
     try:
         s = Gio.Settings.new("org.gnome.desktop.session")
         v = int(s.get_uint("idle-delay"))
@@ -64,6 +72,7 @@ def _get_idle_seconds_from_gsettings() -> int:
 
 
 def _proxy(bus_name: str, object_path: str, interface: str) -> Gio.DBusProxy:
+    _load_gi()
     return Gio.DBusProxy.new_for_bus_sync(
         Gio.BusType.SESSION,
         Gio.DBusProxyFlags.NONE,
@@ -76,6 +85,7 @@ def _proxy(bus_name: str, object_path: str, interface: str) -> Gio.DBusProxy:
 
 
 def _dbus_call(proxy: Gio.DBusProxy, method: str, params: Optional[GLib.Variant] = None):
+    _load_gi()
     return proxy.call_sync(method, params, Gio.DBusCallFlags.NONE, -1, None)
 
 
@@ -107,6 +117,7 @@ def _fallback_lock() -> None:
 
 class IdleDaemon:
     def __init__(self, settings: Settings):
+        _load_gi()
         self.settings = settings
         self.idle = _proxy(
             "org.gnome.Mutter.IdleMonitor",
@@ -427,7 +438,10 @@ def _parse_args(argv: list[str]) -> Settings:
         "--screen-off",
         default="21:00",
         metavar="HH:MM",
-        help="Start of night window (default: 21:00). Idle turns display off via DPMS instead of launching Claw Face.",
+        help=(
+            "Start of night window (default: 21:00). Idle turns display off via DPMS "
+            "instead of launching Claw Face."
+        ),
     )
     p.add_argument(
         "--screen-on",

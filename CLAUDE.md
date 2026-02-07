@@ -6,7 +6,7 @@ This repo is a Python app that renders an animated dot-matrix “face” in a fu
 
 - Run normally (fullscreen by default):
   - `claw-face`
-  - or `python3 -m src.claw_face.main`
+  - or `PYTHONPATH=src python3 -m claw_face.main`
 - Run windowed:
   - `claw-face --windowed`
 - Run the GNOME/Wayland idle launcher (shows Claw Face when idle, locks on ESC/Q exit):

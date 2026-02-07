@@ -13,7 +13,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 CONFIG_DIR = Path.home() / ".config" / "claw-face"
 COMMAND_FILE = CONFIG_DIR / "command.json"
 STATUS_FILE = CONFIG_DIR / "status.txt"

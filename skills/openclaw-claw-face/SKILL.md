@@ -11,7 +11,7 @@ This skill controls the `claw-face` kiosk UI by writing:
 - `~/.config/claw-face/command.json` (expression + auto-cycle)
 - `~/.config/claw-face/status.txt` (bottom status line)
 
-The running Claw Face app polls these once per second (command) and every ~7s (status).
+The running Claw Face app polls these once per second (command/status).
 
 ## Valid Expressions
 
@@ -48,4 +48,3 @@ Quit the kiosk (only works if Claw Face is running and using its local HTTP serv
 ```bash
 curl -fsS "http://127.0.0.1:8420/api/quit" >/dev/null || true
 ```
-

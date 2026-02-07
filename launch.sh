@@ -1,4 +1,4 @@
 #!/bin/bash
 # Launch Claw Face
 cd "$(dirname "$0")"
-exec python3 -m src.claw_face.main "$@"
+exec env PYTHONPATH=src python3 -m claw_face "$@"

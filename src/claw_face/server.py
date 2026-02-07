@@ -1,6 +1,6 @@
-"""HTTP server for Claw Face web UI."""
-
+import ipaddress
 import json
+import logging
 import threading
 import webbrowser
 from functools import partial
@@ -8,11 +8,20 @@ from http import HTTPStatus
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 
-from .config import Config, CONFIG_DIR
+from .config import CONFIG_DIR, Config
 
 STATUS_FILE = CONFIG_DIR / "status.txt"
 COMMAND_FILE = CONFIG_DIR / "command.json"
 WEB_DIR = Path(__file__).parent / "web"
+
+log = logging.getLogger(__name__)
+
+
+def _is_loopback_address(addr: str) -> bool:
+    try:
+        return ipaddress.ip_address(addr).is_loopback
+    except ValueError:
+        return False
 
 
 class ClawFaceHandler(SimpleHTTPRequestHandler):
@@ -23,6 +32,22 @@ class ClawFaceHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, config: Config, **kwargs):
         self.config = config
         super().__init__(*args, directory=str(WEB_DIR), **kwargs)
+
+    def _require_loopback(self) -> bool:
+        ip = ""
+        try:
+            ip = str(self.client_address[0])
+        except Exception:
+            ip = ""
+        if _is_loopback_address(ip):
+            return True
+        self.send_response(HTTPStatus.FORBIDDEN)
+        body = json.dumps({"ok": False, "error": "forbidden"}).encode()
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return False
 
     def do_GET(self):
         if self.path == '/api/status':
@@ -39,6 +64,8 @@ class ClawFaceHandler(SimpleHTTPRequestHandler):
             super().do_GET()
 
     def _handle_quit(self):
+        if not self._require_loopback():
+            return
         self._json_response({"ok": True})
         w = ClawFaceHandler.webview_window
         if w:
@@ -87,6 +114,8 @@ class ClawFaceHandler(SimpleHTTPRequestHandler):
         self._json_response(data)
 
     def _handle_fullscreen_toggle(self):
+        if not self._require_loopback():
+            return
         w = ClawFaceHandler.webview_window
         ok = False
         if w is not None:
@@ -121,7 +150,9 @@ def _start_server(config, port):
         return HTTPServer((host, port), handler)
     except OSError as e:
         if e.errno == 98:  # Address already in use
-            print(f"Error: port {port} is already in use. Try --port <number>.")
+            msg = f"port {port} is already in use"
+            log.error(msg)
+            print(f"Error: {msg}. Try --port <number>.")
             return None
         raise
 
@@ -132,6 +163,7 @@ def run_server(config: Config, port: int = 8420, mode: str = "webview"):
     mode: "webview" (native fullscreen window), "browser" (system browser),
           or "headless" (server only).
     """
+    config.validate()
     server = _start_server(config, port)
     if server is None:
         return 1

@@ -2,15 +2,18 @@
 """
 Claw Face - Main entry point
 
-Run with: python -m claw_face
-Or after install: claw-face
+Run with:
+  PYTHONPATH=src python3 -m claw_face
+Or after install:
+  claw-face
 """
 
 import argparse
+import logging
 import sys
 
 from . import __version__
-from .config import Config, CONFIG_FILE
+from .config import CONFIG_FILE, Config
 
 
 def parse_args():
@@ -38,6 +41,12 @@ Examples:
         "--version", "-v",
         action="version",
         version=f"Claw Face {__version__}"
+    )
+
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        help="Logging level (DEBUG, INFO, WARNING, ERROR). Default: INFO",
     )
 
     parser.add_argument(
@@ -108,6 +117,12 @@ def main():
     """Main entry point."""
     args = parse_args()
 
+    logging.basicConfig(
+        level=getattr(logging, str(args.log_level).upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    log = logging.getLogger("claw_face")
+
     # Handle --save-config
     if args.save_config:
         config = Config()
@@ -136,6 +151,7 @@ def main():
         config.display.window_height = args.height
     if args.fps is not None:
         config.display.fps = args.fps
+    config.validate()
 
     # Determine display mode
     if args.browser:
@@ -151,8 +167,8 @@ def main():
         return run_server(config, port=config.display.port, mode=mode)
     except KeyboardInterrupt:
         print("\nExiting...")
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
+    except Exception:
+        log.exception("Fatal error")
         return 1
 
     return 0

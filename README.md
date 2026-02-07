@@ -32,7 +32,7 @@ An animated dot-matrix LED face display for James Claw — white dots on black, 
 
 ```bash
 cd ~/Projects/claw-face
-python3 -m src.claw_face.main
+PYTHONPATH=src python3 -m claw_face.main
 ```
 
 ### Proper Install
