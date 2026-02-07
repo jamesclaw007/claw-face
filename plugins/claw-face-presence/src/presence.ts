@@ -13,6 +13,14 @@ const VALID_EXPRESSIONS = new Set([
   "wink",
   "love",
   "talking",
+  "focused",
+  "thinking",
+  "typing",
+  "excited",
+  "smug",
+  "confused",
+  "glitch",
+  "sleep",
 ]);
 
 type PresenceConfig = {
@@ -82,7 +90,7 @@ export function registerClawFacePresence(api: OpenClawPluginApi): void {
   const cfg: PresenceConfig = {
     idleExpression: str(rawCfg.idleExpression, "neutral"),
     busyExpression: str(rawCfg.busyExpression, "talking"),
-    errorExpression: str(rawCfg.errorExpression, "sad"),
+    errorExpression: str(rawCfg.errorExpression, "glitch"),
     autoCycleIdle: bool(rawCfg.autoCycleIdle, true),
     autoCycleBusy: bool(rawCfg.autoCycleBusy, false),
     idleDelayMs: Math.max(0, Math.floor(num(rawCfg.idleDelayMs, 1500))),
@@ -94,7 +102,7 @@ export function registerClawFacePresence(api: OpenClawPluginApi): void {
 
   if (!VALID_EXPRESSIONS.has(cfg.idleExpression)) cfg.idleExpression = "neutral";
   if (!VALID_EXPRESSIONS.has(cfg.busyExpression)) cfg.busyExpression = "talking";
-  if (!VALID_EXPRESSIONS.has(cfg.errorExpression)) cfg.errorExpression = "sad";
+  if (!VALID_EXPRESSIONS.has(cfg.errorExpression)) cfg.errorExpression = "glitch";
 
   const activeRuns = new Set<string>();
   const toolCounts = new Map<string, number>();
@@ -103,6 +111,8 @@ export function registerClawFacePresence(api: OpenClawPluginApi): void {
 
   let lastCmd = "";
   let lastStatus = "";
+  let blinkSeq = 0;
+  let sequenceSeq = 0;
 
   function busyNow(): boolean {
     if (activeRuns.size > 0) return true;
@@ -119,8 +129,41 @@ export function registerClawFacePresence(api: OpenClawPluginApi): void {
     errorUntilMs = 0;
   }
 
-  async function writeCommand(expression: string, autoCycle: boolean): Promise<void> {
-    const out = { expression, auto_cycle: autoCycle };
+  type CommandV2 = {
+    expression: string;
+    auto_cycle: boolean;
+    intensity?: number;
+    look?: { x: number; y: number };
+    blink_seq?: number;
+    sequence?: string;
+    sequence_seq?: number;
+  };
+
+  async function writeCommand(cmd: CommandV2): Promise<void> {
+    // Keep a stable key order so the lastCmd cache works as intended.
+    const out: Record<string, unknown> = {
+      expression: cmd.expression,
+      auto_cycle: cmd.auto_cycle,
+    };
+    if (typeof cmd.intensity === "number" && Number.isFinite(cmd.intensity)) {
+      out.intensity = Math.max(0, Math.min(1, cmd.intensity));
+    }
+    if (
+      cmd.look &&
+      typeof cmd.look.x === "number" &&
+      typeof cmd.look.y === "number" &&
+      Number.isFinite(cmd.look.x) &&
+      Number.isFinite(cmd.look.y)
+    ) {
+      out.look = {
+        x: Math.max(-1, Math.min(1, cmd.look.x)),
+        y: Math.max(-1, Math.min(1, cmd.look.y)),
+      };
+    }
+    if (typeof cmd.blink_seq === "number" && Number.isFinite(cmd.blink_seq)) out.blink_seq = Math.floor(cmd.blink_seq);
+    if (typeof cmd.sequence === "string" && cmd.sequence.trim()) out.sequence = cmd.sequence;
+    if (typeof cmd.sequence_seq === "number" && Number.isFinite(cmd.sequence_seq)) out.sequence_seq = Math.floor(cmd.sequence_seq);
+
     const payload = JSON.stringify(out, null, 2) + "\n";
     if (payload === lastCmd) return;
     await atomicWrite(cfg.commandPath, payload);
@@ -151,7 +194,7 @@ export function registerClawFacePresence(api: OpenClawPluginApi): void {
     clearIdleTimer();
     clearErrorHold();
     try {
-      await writeCommand(cfg.busyExpression, cfg.autoCycleBusy);
+      await writeCommand({ expression: cfg.busyExpression, auto_cycle: cfg.autoCycleBusy, intensity: 1.0 });
       await writeStatus(status);
     } catch (err) {
       noteIoError(err);
@@ -163,7 +206,7 @@ export function registerClawFacePresence(api: OpenClawPluginApi): void {
     if (busyNow()) return;
     if (Date.now() < errorUntilMs) return;
     try {
-      await writeCommand(cfg.idleExpression, cfg.autoCycleIdle);
+      await writeCommand({ expression: cfg.idleExpression, auto_cycle: cfg.autoCycleIdle, intensity: 0.2 });
       await writeStatus("Ready");
     } catch (err) {
       noteIoError(err);
@@ -175,7 +218,14 @@ export function registerClawFacePresence(api: OpenClawPluginApi): void {
     clearIdleTimer();
     errorUntilMs = Date.now() + cfg.errorHoldMs;
     try {
-      await writeCommand(cfg.errorExpression, false);
+      sequenceSeq += 1;
+      await writeCommand({
+        expression: "glitch",
+        auto_cycle: false,
+        intensity: 1.0,
+        sequence: "error_pulse",
+        sequence_seq: sequenceSeq,
+      });
       await writeStatus(msg);
     } catch (err) {
       noteIoError(err);
@@ -184,7 +234,14 @@ export function registerClawFacePresence(api: OpenClawPluginApi): void {
 
   api.on("gateway_start", async (event, _ctx) => {
     try {
-      await writeCommand(cfg.idleExpression, cfg.autoCycleIdle);
+      sequenceSeq += 1;
+      await writeCommand({
+        expression: cfg.idleExpression,
+        auto_cycle: cfg.autoCycleIdle,
+        intensity: 0.2,
+        sequence: "boot",
+        sequence_seq: sequenceSeq,
+      });
       await writeStatus("Ready");
       api.logger.info(`claw-face-presence: gateway_start port=${String((event as any)?.port ?? "")}`);
     } catch (err) {
@@ -194,7 +251,7 @@ export function registerClawFacePresence(api: OpenClawPluginApi): void {
 
   api.on("gateway_stop", async () => {
     try {
-      await writeCommand("sleepy", true);
+      await writeCommand({ expression: "sleepy", auto_cycle: true, intensity: 0.0 });
       await writeStatus("Gateway stopped");
     } catch (err) {
       noteIoError(err);
@@ -209,7 +266,14 @@ export function registerClawFacePresence(api: OpenClawPluginApi): void {
   api.on("before_agent_start", async (_event, ctx) => {
     const sk = sessionKeyFromCtx(ctx);
     activeRuns.add(sk);
-    await goBusy("Thinking...");
+    clearIdleTimer();
+    clearErrorHold();
+    try {
+      await writeCommand({ expression: "thinking", auto_cycle: false, intensity: 0.7 });
+      await writeStatus("Thinking...");
+    } catch (err) {
+      noteIoError(err);
+    }
   });
 
   api.on("agent_end", async (event, ctx) => {
@@ -238,7 +302,14 @@ export function registerClawFacePresence(api: OpenClawPluginApi): void {
     const tool = typeof (event as any)?.toolName === "string" && (event as any).toolName
       ? (event as any).toolName
       : (typeof (ctx as any)?.toolName === "string" ? (ctx as any).toolName : "tool");
-    await goBusy(`Tool: ${tool}`);
+    clearIdleTimer();
+    clearErrorHold();
+    try {
+      await writeCommand({ expression: "focused", auto_cycle: false, intensity: 1.0 });
+      await writeStatus(`Tool: ${tool}`);
+    } catch (err) {
+      noteIoError(err);
+    }
   });
 
   api.on("after_tool_call", async (event, ctx) => {
@@ -260,7 +331,20 @@ export function registerClawFacePresence(api: OpenClawPluginApi): void {
   });
 
   api.on("message_sending", async () => {
-    await goBusy("Sending reply...");
+    clearIdleTimer();
+    clearErrorHold();
+    blinkSeq += 1;
+    try {
+      await writeCommand({
+        expression: cfg.busyExpression,
+        auto_cycle: cfg.autoCycleBusy,
+        intensity: 1.0,
+        blink_seq: blinkSeq,
+      });
+      await writeStatus("Sending reply...");
+    } catch (err) {
+      noteIoError(err);
+    }
   });
 
   api.on("message_sent", async (event) => {
@@ -280,4 +364,3 @@ export function registerClawFacePresence(api: OpenClawPluginApi): void {
     `claw-face-presence: loaded (commandPath=${cfg.commandPath} statusPath=${cfg.statusPath})`,
   );
 }
-

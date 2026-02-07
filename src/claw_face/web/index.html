@@ -113,6 +113,13 @@ resize();
 function rnd(a, b) { return a + Math.random() * (b - a); }
 function ease(t) { return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2; }
 function lerp(a, b, t) { return a + (b - a) * t; }
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function expToward(cur, tgt, dtMs, halfLifeMs) {
+  // Exponential smoothing with a half-life in milliseconds.
+  if (halfLifeMs <= 0) return tgt;
+  const k = Math.pow(0.5, dtMs / halfLifeMs);
+  return tgt + (cur - tgt) * k;
+}
 
 // ============================================================
 // ANIMATION STATE
@@ -127,29 +134,58 @@ let blinkAmt = 0, blinkPhase = 0, blinkTimer = 0;
 let blinkMinMs = 3000;
 let blinkMaxMs = 5500;
 let blinkInterval = rnd(blinkMinMs, blinkMaxMs);
+let blinkQueue = 0;
+let blinkInterDelayMs = 120;
+let blinkInterTimer = 0;
+let blinkCloseRate = 0.009;
+let blinkOpenRate = 0.007;
 
 // Look direction
 let lookX = 0, lookY = 0, targetLookX = 0, targetLookY = 0;
 let lookTimer = 0, lookInterval = rnd(2000, 5000);
 let lookMinMs = 2000;
 let lookMaxMs = 5000;
+let lookJumpMs = 0;
+let lookJumpDurMs = 120;
+
+// Slight per-eye asymmetry so the face doesn't feel perfectly mirrored.
+let eyeNoiseLX = 0, eyeNoiseLY = 0, eyeNoiseRX = 0, eyeNoiseRY = 0;
+let eyeNoiseTLX = 0, eyeNoiseTLY = 0, eyeNoiseTRX = 0, eyeNoiseTRY = 0;
+let eyeNoiseTimer = 0, eyeNoiseInterval = rnd(3000, 7000);
 
 // Breathing & talk
 let breathPhase = 0, talkPhase = 0;
+
+// External command (v2)
+let cmdIntensity = null; // number in [0,1] or null (default behavior)
+let animIntensity = 1.0; // smoothed intensity actually applied
+let lookOverride = null; // {x,y} or null
+let lastBlinkSeq = null;
+let lastSequenceSeq = null;
+let activeSequence = null; // {name, untilMs} or null
+let glitchPulseUntilMs = 0;
 
 // ============================================================
 // EXPRESSION AUTO-CYCLING (weighted random)
 // ============================================================
 const EXPRESSION_WEIGHTS = {
-  neutral:   25,
-  happy:     35,
-  sad:        5,
+  neutral:   22,
+  happy:     26,
+  sad:        4,
   angry:      3,
-  surprised:  8,
-  sleepy:    12,
-  wink:      12,
-  love:       8,
+  surprised:  6,
+  sleepy:    10,
+  wink:       9,
+  love:       6,
   talking:    5,
+  focused:    6,
+  thinking:   6,
+  typing:     3,
+  excited:    4,
+  smug:       3,
+  confused:   3,
+  glitch:     1,
+  sleep:      2,
 };
 
 let autoCycleEnabled = true;
@@ -275,22 +311,27 @@ function dotsInLine(ox, oy, w, t) { return dotsLine(ox, oy, w, t); }
 // ============================================================
 // EXPRESSION BUILDER
 // ============================================================
-function buildExpr(name, s, lx, ly, blink, talk) {
+function buildExpr(name, s, lx, ly, blink, talk, intensity) {
+  const I = clamp(typeof intensity === 'number' ? intensity : 1, 0, 1);
   const sep = 80 * s;
   const eyeY = cy - 30 * s;
   const mouthY = cy + 65 * s;
   const R = 32 * s;
   const lOx = lx * 6 * s, lOy = ly * 4 * s;
-  const leX = cx - sep + lOx, reX = cx + sep + lOx, eY = eyeY + lOy;
+  const leX = cx - sep + lOx + eyeNoiseLX * 4 * s;
+  const reX = cx + sep + lOx + eyeNoiseRX * 4 * s;
+  const leY = eyeY + lOy + eyeNoiseLY * 3 * s;
+  const reY = eyeY + lOy + eyeNoiseRY * 3 * s;
   const b = 1 - blink;
   let le, re, mo;
+  let ex = [];
 
-  const closedL = () => dotsInLine(leX, eY, R * 1.5, DOT_SPACING);
-  const closedR = () => dotsInLine(reX, eY, R * 1.5, DOT_SPACING);
+  const closedL = () => dotsInLine(leX, leY, R * 1.5, DOT_SPACING);
+  const closedR = () => dotsInLine(reX, reY, R * 1.5, DOT_SPACING);
 
   function stdEyes(ry) {
     if (ry < DOT_SPACING) return [closedL(), closedR()];
-    return [dotsCircle(leX, eY, ry), dotsCircle(reX, eY, ry)];
+    return [dotsCircle(leX, leY, ry), dotsCircle(reX, reY, ry)];
   }
 
   switch (name) {
@@ -303,8 +344,8 @@ function buildExpr(name, s, lx, ly, blink, talk) {
       const ry = R * 0.9 * b;
       if (ry < DOT_SPACING) { le = closedL(); re = closedR(); }
       else {
-        le = dotsHalfCircle(leX, eY + ry*0.35, ry*0.9, 'top');
-        re = dotsHalfCircle(reX, eY + ry*0.35, ry*0.9, 'top');
+        le = dotsHalfCircle(leX, leY + ry*0.35, ry*0.9, 'top');
+        re = dotsHalfCircle(reX, reY + ry*0.35, ry*0.9, 'top');
       }
       mo = dotsArc(cx, mouthY - 8*s, 42*s, Math.PI*0.08, Math.PI*0.92, 5.5*s);
       break;
@@ -312,7 +353,7 @@ function buildExpr(name, s, lx, ly, blink, talk) {
     case 'sad': {
       const ry = R * 0.85 * b;
       if (ry < DOT_SPACING) { le = closedL(); re = closedR(); }
-      else { le = dotsCircle(leX, eY + 4*s, ry); re = dotsCircle(reX, eY + 4*s, ry); }
+      else { le = dotsCircle(leX, leY + 4*s, ry); re = dotsCircle(reX, reY + 4*s, ry); }
       mo = dotsArc(cx, mouthY + 25*s, 30*s, Math.PI*1.15, Math.PI*1.85, 4*s);
       break;
     }
@@ -320,50 +361,127 @@ function buildExpr(name, s, lx, ly, blink, talk) {
       const ry = R * 0.55 * b;
       if (ry < DOT_SPACING) { le = closedL(); re = closedR(); }
       else {
-        le = dotsEllipse(leX, eY + 6*s, R*1.15, ry);
-        re = dotsEllipse(reX, eY + 6*s, R*1.15, ry);
+        le = dotsEllipse(leX, leY + 6*s, R*1.15, ry);
+        re = dotsEllipse(reX, reY + 6*s, R*1.15, ry);
       }
       mo = dotsLine(cx, mouthY + 5*s, 50*s, 5*s);
+      // Brows (simple straight lines)
+      ex = ex.concat(
+        dotsLine(leX + 6*s, leY - R*0.95, R*1.15, 3.5*s),
+        dotsLine(reX - 6*s, reY - R*0.95, R*1.15, 3.5*s),
+      );
       break;
     }
     case 'surprised': {
       const big = R * 1.25 * b;
       if (big < DOT_SPACING) { le = closedL(); re = closedR(); }
-      else { le = dotsCircle(leX, eY - 5*s, big); re = dotsCircle(reX, eY - 5*s, big); }
+      else { le = dotsCircle(leX, leY - 5*s, big); re = dotsCircle(reX, reY - 5*s, big); }
       mo = dotsEllipse(cx, mouthY + 8*s, 14*s, 18*s);
       break;
     }
     case 'sleepy': {
       const ry = R * 0.22 * b;
       if (ry < DOT_SPACING) {
-        le = dotsLine(leX, eY + 10*s, R*1.3, DOT_SPACING);
-        re = dotsLine(reX, eY + 10*s, R*1.3, DOT_SPACING);
+        le = dotsLine(leX, leY + 10*s, R*1.3, DOT_SPACING);
+        re = dotsLine(reX, reY + 10*s, R*1.3, DOT_SPACING);
       } else {
-        le = dotsEllipse(leX, eY + 10*s, R*1.1, ry);
-        re = dotsEllipse(reX, eY + 10*s, R*1.1, ry);
+        le = dotsEllipse(leX, leY + 10*s, R*1.1, ry);
+        re = dotsEllipse(reX, reY + 10*s, R*1.1, ry);
       }
       mo = dotsArc(cx, mouthY, 20*s, Math.PI*0.2, Math.PI*0.8, 3.5*s);
       break;
     }
     case 'wink': {
       const ry = R * b;
-      re = ry < DOT_SPACING ? closedR() : dotsCircle(reX, eY, ry);
-      le = dotsArc(leX, eY + R*0.1, R*0.7, Math.PI*0.05, Math.PI*0.95, 3*s);
+      re = ry < DOT_SPACING ? closedR() : dotsCircle(reX, reY, ry);
+      le = dotsArc(leX, leY + R*0.1, R*0.7, Math.PI*0.05, Math.PI*0.95, 3*s);
       mo = dotsArc(cx + 4*s, mouthY - 2*s, 36*s, Math.PI*0.1, Math.PI*0.85, 4.5*s);
       break;
     }
     case 'love': {
       const hs = 24*s * (b*0.25 + 0.75);
-      le = dotsHeart(leX, eY + 2*s, hs);
-      re = dotsHeart(reX, eY + 2*s, hs);
+      le = dotsHeart(leX, leY + 2*s, hs);
+      re = dotsHeart(reX, reY + 2*s, hs);
       mo = dotsArc(cx, mouthY - 5*s, 38*s, Math.PI*0.08, Math.PI*0.92, 5*s);
       break;
     }
     case 'talking': {
       [le, re] = stdEyes(R * b);
-      const mrx = 18*s + Math.abs(Math.sin(talk)) * 12*s;
-      const mry = 10*s + Math.abs(Math.sin(talk)) * 16*s;
+      const amp = (0.25 + 0.75 * I);
+      const mrx = 18*s + Math.abs(Math.sin(talk)) * (12*s * amp);
+      const mry = 10*s + Math.abs(Math.sin(talk)) * (16*s * amp);
       mo = dotsEllipse(cx, mouthY + 5*s, mrx, mry);
+      break;
+    }
+    case 'focused': {
+      const ry = R * 0.48 * b;
+      if (ry < DOT_SPACING) { le = closedL(); re = closedR(); }
+      else {
+        le = dotsEllipse(leX, leY + 4*s, R*1.1, ry);
+        re = dotsEllipse(reX, reY + 4*s, R*1.1, ry);
+      }
+      mo = dotsLine(cx, mouthY + 6*s, 42*s, 4.0*s);
+      ex = ex.concat(
+        dotsLine(leX + 8*s, leY - R*0.95, R*1.1, 3.2*s),
+        dotsLine(reX - 8*s, reY - R*0.95, R*1.1, 3.2*s),
+      );
+      break;
+    }
+    case 'thinking': {
+      [le, re] = stdEyes(R * 0.95 * b);
+      mo = dotsArc(cx, mouthY + 3*s, 24*s, Math.PI*0.15, Math.PI*0.85, 3.8*s);
+      // Small "thought" dot near the temple.
+      ex = ex.concat(dotsCircle(leX - R*1.25, leY - R*0.1, 6*s));
+      break;
+    }
+    case 'typing': {
+      // A calmer talking, plus three dots.
+      [le, re] = stdEyes(R * 0.9 * b);
+      const amp = (0.2 + 0.8 * I);
+      const mrx = 14*s + Math.abs(Math.sin(talk)) * (8*s * amp);
+      const mry = 7*s + Math.abs(Math.sin(talk)) * (10*s * amp);
+      mo = dotsEllipse(cx, mouthY + 7*s, mrx, mry);
+      break;
+    }
+    case 'excited': {
+      const big = R * 1.15 * b;
+      if (big < DOT_SPACING) { le = closedL(); re = closedR(); }
+      else {
+        le = dotsCircle(leX, leY - 2*s, big);
+        re = dotsCircle(reX, reY - 2*s, big);
+      }
+      mo = dotsEllipse(cx, mouthY + 10*s, 24*s, 24*s);
+      break;
+    }
+    case 'smug': {
+      const ry = R * 0.85 * b;
+      // Left eye slightly squinted.
+      const sly = R * 0.28 * b;
+      le = sly < DOT_SPACING ? closedL() : dotsEllipse(leX, leY + 8*s, R*1.05, sly);
+      re = ry < DOT_SPACING ? closedR() : dotsCircle(reX, reY, ry);
+      mo = dotsArc(cx + 14*s, mouthY + 2*s, 30*s, Math.PI*0.10, Math.PI*0.78, 4.3*s);
+      ex = ex.concat(dotsLine(reX - 12*s, reY - R*0.95, R*1.05, 3.2*s));
+      break;
+    }
+    case 'confused': {
+      const r1 = R * 0.8 * b;
+      const r2 = R * 0.6 * b;
+      le = r1 < DOT_SPACING ? closedL() : dotsCircle(leX, leY - 5*s, r1);
+      re = r2 < DOT_SPACING ? closedR() : dotsEllipse(reX, reY + 6*s, R*1.05, r2);
+      mo = dotsArc(cx, mouthY + 20*s, 24*s, Math.PI*1.05, Math.PI*1.65, 3.8*s);
+      ex = ex.concat(dotsLine(leX + 10*s, leY - R*1.05, R*1.0, 3.0*s));
+      break;
+    }
+    case 'glitch': {
+      [le, re] = stdEyes(R * b);
+      mo = dotsArc(cx, mouthY, 35*s, Math.PI*0.15, Math.PI*0.85, 4.5*s);
+      break;
+    }
+    case 'sleep': {
+      // Fully "off" / closed.
+      le = dotsLine(leX, leY + 12*s, R*1.45, DOT_SPACING);
+      re = dotsLine(reX, reY + 12*s, R*1.45, DOT_SPACING);
+      mo = dotsArc(cx, mouthY + 10*s, 18*s, Math.PI*0.20, Math.PI*0.80, 3.2*s);
       break;
     }
     default: {
@@ -372,7 +490,7 @@ function buildExpr(name, s, lx, ly, blink, talk) {
     }
   }
 
-  return { le, re, mo };
+  return { le, re, mo, ex };
 }
 
 // ============================================================
@@ -393,7 +511,27 @@ function morphDots(from, to, t) {
   return res;
 }
 
-function drawDots(dots) {
+function drawDots(dots, jitterPx = 0) {
+  const jitter = Math.max(0, Number(jitterPx) || 0);
+
+  // For glitch/jitter, per-dot offsets break batching; draw individually.
+  if (jitter > 0.01) {
+    ctx.fillStyle = DOT_COLOR;
+    for (const d of dots) {
+      const a = d[2] ?? 1;
+      if (a < 0.04) continue;
+      const jx = (Math.random() - 0.5) * jitter;
+      const jy = (Math.random() - 0.5) * jitter;
+      if (a < 0.96) ctx.globalAlpha = a;
+      ctx.beginPath();
+      ctx.arc(d[0] + jx, d[1] + jy, DOT_R, 0, Math.PI * 2);
+      ctx.fill();
+      if (a < 0.96) ctx.globalAlpha = 1;
+    }
+    ctx.globalAlpha = 1;
+    return;
+  }
+
   // Batch all full-opacity dots into a single path (vast majority of frames)
   ctx.fillStyle = DOT_COLOR;
   ctx.beginPath();
@@ -503,8 +641,27 @@ fetch('/api/config')
 // COMMAND FETCH (optional: external control via command.json)
 // ============================================================
 const KNOWN_EXPRS = new Set([
-  'neutral', 'happy', 'sad', 'angry', 'surprised', 'sleepy', 'wink', 'love', 'talking'
+  'neutral', 'happy', 'sad', 'angry', 'surprised', 'sleepy', 'wink', 'love', 'talking',
+  'focused', 'thinking', 'typing', 'excited', 'smug', 'confused', 'glitch', 'sleep'
 ]);
+
+function startSequence(name) {
+  const n = typeof name === 'string' ? name : '';
+  const now = performance.now();
+  if (n === 'boot') {
+    activeSequence = { name: 'boot', untilMs: now + 1600, stage: 0, startMs: now };
+    // Kick it off immediately.
+    setExpression('excited');
+    blinkQueue = Math.max(blinkQueue, 2);
+    return;
+  }
+  if (n === 'error_pulse') {
+    activeSequence = { name: 'error_pulse', untilMs: now + 900, stage: 0, startMs: now };
+    glitchPulseUntilMs = Math.max(glitchPulseUntilMs, now + 650);
+    setExpression('glitch');
+    return;
+  }
+}
 
 function fetchCommand() {
   fetch('/api/command')
@@ -517,6 +674,47 @@ function fetchCommand() {
         if (typeof cmd.auto_cycle === 'boolean') {
           autoCycleEnabled = cmd.auto_cycle;
           autoCycleTimer = 0;
+        }
+
+        if (typeof cmd.intensity === 'number' && Number.isFinite(cmd.intensity)) {
+          cmdIntensity = clamp(cmd.intensity, 0, 1);
+        } else if ('intensity' in cmd) {
+          // Explicitly present but invalid -> ignore, keep previous.
+        } else {
+          cmdIntensity = null;
+        }
+
+        if ('look' in cmd) {
+          if (cmd.look && typeof cmd.look === 'object') {
+            const x = cmd.look.x, y = cmd.look.y;
+            if (typeof x === 'number' && typeof y === 'number' && Number.isFinite(x) && Number.isFinite(y)) {
+              lookOverride = { x: clamp(x, -1, 1), y: clamp(y, -1, 1) };
+            } else {
+              lookOverride = null;
+            }
+          } else {
+            lookOverride = null;
+          }
+        } else {
+          lookOverride = null;
+        }
+
+        if (typeof cmd.blink_seq === 'number' && Number.isFinite(cmd.blink_seq)) {
+          const v = cmd.blink_seq | 0;
+          if (lastBlinkSeq === null) lastBlinkSeq = v;
+          else if (v !== lastBlinkSeq) {
+            lastBlinkSeq = v;
+            blinkQueue = Math.max(blinkQueue, 1);
+          }
+        }
+
+        if (typeof cmd.sequence_seq === 'number' && Number.isFinite(cmd.sequence_seq)) {
+          const v = cmd.sequence_seq | 0;
+          if (lastSequenceSeq === null) lastSequenceSeq = v;
+          else if (v !== lastSequenceSeq) {
+            lastSequenceSeq = v;
+            if (typeof cmd.sequence === 'string') startSequence(cmd.sequence);
+          }
         }
       }
     })
@@ -548,40 +746,106 @@ function frame() {
   const dt = Math.min(accumulator, 50);
   accumulator = 0;
 
+  // --- External intensity (smoothed) ---
+  const targetI = (cmdIntensity == null) ? 1.0 : clamp(cmdIntensity, 0, 1);
+  animIntensity = expToward(animIntensity, targetI, dt, 220);
+  const I = animIntensity;
+
   // --- Blink ---
   blinkTimer += dt;
-  if (blinkPhase === 0 && blinkTimer >= blinkInterval) {
+  if (blinkPhase === 0 && blinkQueue === 0 && blinkTimer >= blinkInterval) {
+    // Randomly choose single or double blink.
+    blinkQueue = (Math.random() < 0.10) ? 2 : 1;
+  }
+  if (blinkPhase === 0 && blinkQueue > 0) {
+    blinkQueue = Math.max(0, blinkQueue - 1);
     blinkPhase = 1;
     blinkTimer = 0;
+    // Slightly vary blink speeds per blink.
+    blinkCloseRate = rnd(0.0085, 0.0115) * (0.7 + 0.3 * I);
+    blinkOpenRate = rnd(0.0065, 0.0090) * (0.7 + 0.3 * I);
   }
   if (blinkPhase === 1) {
-    blinkAmt += dt * 0.009;
+    blinkAmt += dt * blinkCloseRate;
     if (blinkAmt >= 1) { blinkAmt = 1; blinkPhase = 2; }
-  }
-  if (blinkPhase === 2) {
-    blinkAmt -= dt * 0.007;
+  } else if (blinkPhase === 2) {
+    blinkAmt -= dt * blinkOpenRate;
     if (blinkAmt <= 0) {
       blinkAmt = 0;
+      if (blinkQueue > 0) {
+        blinkPhase = 3;
+        blinkInterTimer = 0;
+      } else {
+        blinkPhase = 0;
+        blinkInterval = rnd(blinkMinMs, blinkMaxMs);
+        blinkTimer = 0;
+      }
+    }
+  } else if (blinkPhase === 3) {
+    blinkInterTimer += dt;
+    if (blinkInterTimer >= blinkInterDelayMs) {
       blinkPhase = 0;
-      blinkInterval = rnd(blinkMinMs, blinkMaxMs);
-      blinkTimer = 0;
     }
   }
 
   // --- Look direction ---
-  lookTimer += dt;
-  if (lookTimer >= lookInterval) {
-    targetLookX = rnd(-1, 1);
-    targetLookY = rnd(-0.5, 0.5);
-    lookInterval = rnd(lookMinMs, lookMaxMs);
-    lookTimer = 0;
+  if (lookOverride) {
+    targetLookX = lookOverride.x;
+    targetLookY = lookOverride.y;
+    lookJumpMs = 0;
+  } else {
+    lookTimer += dt;
+    if (lookTimer >= lookInterval) {
+      targetLookX = rnd(-1, 1);
+      targetLookY = rnd(-0.55, 0.55);
+      lookInterval = rnd(lookMinMs, lookMaxMs);
+      lookTimer = 0;
+      lookJumpMs = 0;
+      lookJumpDurMs = rnd(90, 140);
+    }
+    lookJumpMs += dt;
   }
-  lookX += (targetLookX - lookX) * 0.05;
-  lookY += (targetLookY - lookY) * 0.05;
+  const jumpHL = lerp(55, 22, I);
+  const settleHL = lerp(240, 120, I);
+  const hl = (lookOverride || lookJumpMs < lookJumpDurMs) ? jumpHL : settleHL;
+  lookX = expToward(lookX, targetLookX, dt, hl);
+  lookY = expToward(lookY, targetLookY, dt, hl);
+
+  // Subtle asymmetry drift.
+  eyeNoiseTimer += dt;
+  if (eyeNoiseTimer >= eyeNoiseInterval) {
+    eyeNoiseTLX = rnd(-0.22, 0.22);
+    eyeNoiseTLY = rnd(-0.18, 0.18);
+    eyeNoiseTRX = rnd(-0.22, 0.22);
+    eyeNoiseTRY = rnd(-0.18, 0.18);
+    eyeNoiseInterval = rnd(3000, 7000);
+    eyeNoiseTimer = 0;
+  }
+  const noiseHL = 480;
+  eyeNoiseLX = expToward(eyeNoiseLX, eyeNoiseTLX, dt, noiseHL);
+  eyeNoiseLY = expToward(eyeNoiseLY, eyeNoiseTLY, dt, noiseHL);
+  eyeNoiseRX = expToward(eyeNoiseRX, eyeNoiseTRX, dt, noiseHL);
+  eyeNoiseRY = expToward(eyeNoiseRY, eyeNoiseTRY, dt, noiseHL);
 
   // --- Breathing & talk ---
-  breathPhase += dt * 0.0018;
-  if (targetExpr === 'talking') talkPhase += dt * 0.013;
+  breathPhase += dt * (0.00135 + 0.00115 * I);
+  if (targetExpr === 'talking' || targetExpr === 'typing') talkPhase += dt * (0.010 + 0.012 * I);
+
+  // --- Sequences ---
+  if (activeSequence) {
+    if (now >= activeSequence.untilMs) {
+      activeSequence = null;
+    } else if (activeSequence.name === 'boot') {
+      const e = now - activeSequence.startMs;
+      if (e > 650 && activeSequence.stage < 1) {
+        activeSequence.stage = 1;
+        setExpression('happy');
+      } else if (e > 1100 && activeSequence.stage < 2) {
+        activeSequence.stage = 2;
+        setExpression('neutral');
+      }
+    }
+  }
 
   // --- Expression morph ---
   if (morphT < 1) {
@@ -606,22 +870,26 @@ function frame() {
   ctx.fillRect(0, 0, W, H);
   // Build geometry at base scale, apply breathing via canvas transform
   const baseS = Math.min(W, H) / 260;
-  const breathScale = 1 + Math.sin(breathPhase) * 0.012;
-  const from = buildExpr(currentExpr, baseS, lookX, lookY, blinkAmt, talkPhase);
-  const to = buildExpr(targetExpr, baseS, lookX, lookY, blinkAmt, talkPhase);
+  const breathScale = 1 + Math.sin(breathPhase) * (0.006 + 0.010 * I);
+  const from = buildExpr(currentExpr, baseS, lookX, lookY, blinkAmt, talkPhase, I);
+  const to = buildExpr(targetExpr, baseS, lookX, lookY, blinkAmt, talkPhase, I);
   const t = ease(morphT);
 
   const all = [
     ...morphDots(from.le, to.le, t),
     ...morphDots(from.re, to.re, t),
     ...morphDots(from.mo, to.mo, t),
+    ...morphDots(from.ex || [], to.ex || [], t),
   ];
+
+  const glitchActive = (currentExpr === 'glitch' || targetExpr === 'glitch') || (now < glitchPulseUntilMs);
+  const jitter = glitchActive ? (DOT_SPACING * (0.10 + 0.28 * I)) : 0;
 
   ctx.save();
   ctx.translate(cx, cy);
   ctx.scale(breathScale, breathScale);
   ctx.translate(-cx, -cy);
-  drawDots(all);
+  drawDots(all, jitter);
   ctx.restore();
 
   // Cached overlay (scanlines + vignette)
@@ -642,11 +910,12 @@ function setExpression(name) {
 }
 
 function manualBlink() {
-  // Trigger a blink ASAP if not already blinking.
-  if (blinkPhase === 0) {
-    blinkPhase = 1;
-    blinkTimer = 0;
+  // Trigger a blink ASAP; if already blinking, queue another.
+  if (blinkPhase === 0 && blinkQueue === 0) {
+    blinkQueue = 1;
+    return;
   }
+  blinkQueue = Math.min(3, blinkQueue + 1);
 }
 
 function toggleFullscreen() {
@@ -685,6 +954,17 @@ document.addEventListener('keydown', e => {
     toggleFullscreen();
     return;
   }
+
+  // Extra expression hotkeys (letters)
+  const kk = (typeof k === 'string') ? k.toLowerCase() : '';
+  if (kk === 't') { setExpression('thinking'); return; }
+  if (kk === 'y') { setExpression('typing'); return; }
+  if (kk === 'o') { setExpression('focused'); return; }
+  if (kk === 'e') { setExpression('excited'); return; }
+  if (kk === 's') { setExpression('smug'); return; }
+  if (kk === 'c') { setExpression('confused'); return; }
+  if (kk === 'g') { setExpression('glitch'); return; }
+  if (kk === 'z') { setExpression('sleep'); return; }
 
   // Expression hotkeys: 1-9
   const exprs = [

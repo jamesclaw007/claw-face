@@ -93,12 +93,38 @@ class ClawFaceHandler(SimpleHTTPRequestHandler):
         except (OSError, json.JSONDecodeError):
             data = {}
         # Keep the surface area small: only return known keys.
-        out = {}
+        out: dict[str, object] = {}
         if isinstance(data, dict):
             if isinstance(data.get("expression"), str):
                 out["expression"] = data["expression"]
             if isinstance(data.get("auto_cycle"), bool):
                 out["auto_cycle"] = data["auto_cycle"]
+
+            # v2 extensions (all optional)
+            intensity = data.get("intensity")
+            if isinstance(intensity, (int, float)) and intensity == intensity:
+                out["intensity"] = max(0.0, min(1.0, float(intensity)))
+
+            look = data.get("look")
+            if isinstance(look, dict):
+                x = look.get("x")
+                y = look.get("y")
+                if isinstance(x, (int, float)) and isinstance(y, (int, float)) and x == x and y == y:
+                    out["look"] = {
+                        "x": max(-1.0, min(1.0, float(x))),
+                        "y": max(-1.0, min(1.0, float(y))),
+                    }
+
+            blink_seq = data.get("blink_seq")
+            if isinstance(blink_seq, (int, float)) and blink_seq == blink_seq:
+                out["blink_seq"] = int(blink_seq)
+
+            seq = data.get("sequence")
+            if isinstance(seq, str):
+                out["sequence"] = seq
+            seq_seq = data.get("sequence_seq")
+            if isinstance(seq_seq, (int, float)) and seq_seq == seq_seq:
+                out["sequence_seq"] = int(seq_seq)
         self._json_response(out)
 
     def _handle_config(self):

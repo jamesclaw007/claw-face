@@ -8,7 +8,7 @@ An animated dot-matrix LED face display for James Claw — white dots on black, 
 ## Features
 
 - **Dot-Matrix LED Style**: All elements rendered as grids of circular dots with visible gaps
-- **9 Expression States**: neutral, happy, sad, angry, surprised, sleepy, wink, love, talking
+- **17 Expression States**: neutral, happy, sad, angry, surprised, sleepy, wink, love, talking, focused, thinking, typing, excited, smug, confused, glitch, sleep
 - **Natural Blinking**: Random 3-6 second intervals with smooth ~200ms close/open
 - **Subtle Idle Animations**: Random eye movements every 2-5 seconds
 - **Breathing Effect**: Subtle size oscillation on eyes for a living feel
@@ -203,7 +203,15 @@ Write `~/.config/claw-face/command.json` to control the face from another proces
 }
 ```
 
-Valid `expression` values: `neutral`, `happy`, `sad`, `angry`, `surprised`, `sleepy`, `wink`, `love`, `talking`.
+Valid `expression` values: `neutral`, `happy`, `sad`, `angry`, `surprised`, `sleepy`, `wink`, `love`, `talking`, `focused`, `thinking`, `typing`, `excited`, `smug`, `confused`, `glitch`, `sleep`.
+
+Optional `command.json` v2 keys:
+
+- `intensity`: number in `[0, 1]` (how animated the face is)
+- `look`: `{ "x": -1..1, "y": -1..1 }` (override gaze direction)
+- `blink_seq`: integer (trigger a blink when the value changes)
+- `sequence`: `"boot"` or `"error_pulse"` (one-shot)
+- `sequence_seq`: integer (run `sequence` when the value changes)
 
 ## Always-On Kiosk Mode (systemd --user)
 
