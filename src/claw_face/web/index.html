@@ -98,9 +98,9 @@ const PRESETS = {
     transitionSpeed: 6,
   },
   happy: {
-    L: { w:3, h:0, offY:-1, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, scaleX:1.05 },
-    R: { w:3, h:0, offY:-1, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, scaleX:1.05 },
-    arcAmount: 1, transitionSpeed: 7,
+    L: { w:6, h:8, offY:-2, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, scaleX:1 },
+    R: { w:6, h:8, offY:-2, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, scaleX:1 },
+    catchlight: 1, transitionSpeed: 7,
   },
   sad: {
     L: { w:-2, h:-3, offY:2, tiltTop:5, tiltBot:0, lidTop:0.25, lidBot:0, scaleX:0.95 },
@@ -250,8 +250,8 @@ const eye = {
   tSpeed: 6,
   // Pupil scale modifier
   pupilScale: 1,
-  // Arc amount (0=normal filled eyes, 1=crescent arc ⌒)
-  arcAmount: 0,
+  // Catchlight (0=none, 1=bright reflection dot in pupil)
+  catchlight: 0,
   // Current mood
   mood: 'normal',
   // Toggles
@@ -324,7 +324,7 @@ function fillRoundRect(x, y, w, h, r) {
   C.fill();
 }
 
-function drawEye(cx, cy, baseW, baseH, r, ep, blink, pupilScale, gazeX, gazeY, arcAmount) {
+function drawEye(cx, cy, baseW, baseH, r, ep, blink, pupilScale, gazeX, gazeY, catchlight) {
   const ew = (baseW + ep.w) * ep.scaleX;
   const fullH = baseH + ep.h;
   const minH = 3;
@@ -332,36 +332,42 @@ function drawEye(cx, cy, baseW, baseH, r, ep, blink, pupilScale, gazeX, gazeY, a
   const oy = ep.offY * (1 - blink * 0.7);
   const x = cx - ew / 2;
   const y = cy - eh / 2 + oy;
-  const arc = arcAmount || 0;
+  const cl = catchlight || 0;
 
   // Main eye shape
   C.fillStyle = EYE_COLOR;
   fillRoundRect(x, y, ew, eh, Math.min(r, eh / 2));
 
-  // Arc mode: draw inner BG rect shifted down to leave only top crescent
-  if (arc > 0.01) {
-    const insetX = 1 * arc;
-    const shiftDown = 6 * arc;
-    C.fillStyle = BG_COLOR;
-    fillRoundRect(x + insetX, y + shiftDown, ew - insetX * 2, eh, Math.min(r, eh / 2));
-  }
-
-  // Pupil (black center) — only when eye is open enough and not in arc mode
-  if (eh > 8 && arc <= 0.5) {
+  // Pupil — only when eye is open enough
+  if (eh > 8) {
     const ps = pupilScale || 1;
     const pupilW = ew * 0.38 * ps;
     const pupilH = eh * 0.40 * ps;
-    const pupilR = Math.min(Math.min(r, pupilW / 2, pupilH / 2), 6 * ps);
     const maxShiftX = (ew - pupilW) * 0.45;
     const maxShiftY = (eh - pupilH) * 0.45;
-    const px = cx - pupilW / 2 + gazeX * maxShiftX;
-    const py = cy + oy - pupilH / 2 + gazeY * maxShiftY;
+    const pcx = cx + gazeX * maxShiftX;
+    const pcy = cy + oy + gazeY * maxShiftY;
+
     C.fillStyle = BG_COLOR;
+    const pupilR = Math.min(Math.min(r, pupilW / 2, pupilH / 2), 6 * ps);
+    const px = pcx - pupilW / 2;
+    const py = pcy - pupilH / 2;
     fillRoundRect(px, py, pupilW, pupilH, pupilR);
+
+    // Catchlight — small bright dot in upper-right of pupil
+    if (cl > 0.01) {
+      const dotR = Math.min(pupilW, pupilH) * 0.18 * cl;
+      const dotX = pcx + pupilW * 0.18;
+      const dotY = pcy - pupilH * 0.18;
+      C.fillStyle = EYE_COLOR;
+      C.beginPath();
+      C.arc(dotX * S, dotY * S, dotR * S, 0, Math.PI * 2);
+      C.fill();
+    }
   }
 
-  // Angled top lid — skip in arc mode
-  if (arc <= 0.5 && (ep.lidTop > 0.02 || Math.abs(ep.tiltTop) > 0.5)) {
+  // Angled top lid
+  if (ep.lidTop > 0.02 || Math.abs(ep.tiltTop) > 0.5) {
     const lidH = eh * Math.max(ep.lidTop, 0) + Math.abs(ep.tiltTop);
     if (lidH > 0.5) {
       C.fillStyle = BG_COLOR;
@@ -376,8 +382,8 @@ function drawEye(cx, cy, baseW, baseH, r, ep, blink, pupilScale, gazeX, gazeY, a
     }
   }
 
-  // Angled bottom lid — skip in arc mode
-  if (arc <= 0.5 && (ep.lidBot > 0.02 || Math.abs(ep.tiltBot) > 0.5)) {
+  // Angled bottom lid
+  if (ep.lidBot > 0.02 || Math.abs(ep.tiltBot) > 0.5) {
     const lidH = eh * Math.max(ep.lidBot, 0) + Math.abs(ep.tiltBot);
     if (lidH > 0.5) {
       C.fillStyle = BG_COLOR;
@@ -556,8 +562,8 @@ function render() {
   const blinkL = Math.max(e.blinkL, sleepBlink);
   const blinkR = Math.max(e.blinkR, sleepBlink);
 
-  drawEye(leftCX, cy, e.baseW, e.baseH, e.cornerR, e.L, blinkL, e.pupilScale, e.gazeX, e.gazeY, e.arcAmount);
-  drawEye(rightCX, cy, e.baseW, e.baseH, e.cornerR, e.R, blinkR, e.pupilScale, e.gazeX, e.gazeY, e.arcAmount);
+  drawEye(leftCX, cy, e.baseW, e.baseH, e.cornerR, e.L, blinkL, e.pupilScale, e.gazeX, e.gazeY, e.catchlight);
+  drawEye(rightCX, cy, e.baseW, e.baseH, e.cornerR, e.R, blinkR, e.pupilScale, e.gazeX, e.gazeY, e.catchlight);
 
   renderStatus();
 }
@@ -596,9 +602,9 @@ function frame(ts) {
   const targetPS = preset.pupilScale || 1;
   e.pupilScale = smoothStep(e.pupilScale, targetPS, spd * 0.08, dt);
 
-  // Interpolate arc amount (0=filled eyes, 1=crescent arcs ⌒)
-  const targetArc = preset.arcAmount || 0;
-  e.arcAmount = smoothStep(e.arcAmount, targetArc, spd * 0.08, dt);
+  // Interpolate catchlight
+  const targetCL = preset.catchlight || 0;
+  e.catchlight = smoothStep(e.catchlight, targetCL, spd * 0.08, dt);
 
   // Gaze smoothing
   let gazeTargX = e.gazeTargX, gazeTargY = e.gazeTargY;
