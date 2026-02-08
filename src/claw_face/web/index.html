@@ -98,9 +98,9 @@ const PRESETS = {
     transitionSpeed: 6,
   },
   happy: {
-    L: { w:0, h:0, offY:0, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, scaleX:1 },
-    R: { w:0, h:0, offY:0, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, scaleX:1 },
-    pupilScale: 1.5, transitionSpeed: 7,
+    L: { w:3, h:0, offY:-1, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, scaleX:1.05 },
+    R: { w:3, h:0, offY:-1, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, scaleX:1.05 },
+    arcAmount: 1, transitionSpeed: 7,
   },
   sad: {
     L: { w:-2, h:-3, offY:2, tiltTop:5, tiltBot:0, lidTop:0.25, lidBot:0, scaleX:0.95 },
@@ -250,10 +250,10 @@ const eye = {
   tSpeed: 6,
   // Pupil scale modifier
   pupilScale: 1,
+  // Arc amount (0=normal filled eyes, 1=crescent arc ⌒)
+  arcAmount: 0,
   // Current mood
   mood: 'normal',
-  // Happy wink state
-  happyWinkTimer: 0.5 + Math.random() * 0.8, happyWinkSide: 0,
   // Toggles
   autoBlink: true,
   // Timers
@@ -290,8 +290,6 @@ function setMood(name) {
   if (!PRESETS[name]) return;
   eye.mood = name;
   eye.tSpeed = PRESETS[name].transitionSpeed;
-  eye.happyWinkTimer = 0.5 + Math.random() * 0.8;
-  eye.happyWinkSide = 0;
 }
 
 function setExpression(rawName) {
@@ -326,7 +324,7 @@ function fillRoundRect(x, y, w, h, r) {
   C.fill();
 }
 
-function drawEye(cx, cy, baseW, baseH, r, ep, blink, pupilScale, gazeX, gazeY) {
+function drawEye(cx, cy, baseW, baseH, r, ep, blink, pupilScale, gazeX, gazeY, arcAmount) {
   const ew = (baseW + ep.w) * ep.scaleX;
   const fullH = baseH + ep.h;
   const minH = 3;
@@ -334,13 +332,22 @@ function drawEye(cx, cy, baseW, baseH, r, ep, blink, pupilScale, gazeX, gazeY) {
   const oy = ep.offY * (1 - blink * 0.7);
   const x = cx - ew / 2;
   const y = cy - eh / 2 + oy;
+  const arc = arcAmount || 0;
 
   // Main eye shape
   C.fillStyle = EYE_COLOR;
   fillRoundRect(x, y, ew, eh, Math.min(r, eh / 2));
 
-  // Pupil (black center) — only when eye is open enough
-  if (eh > 8) {
+  // Arc mode: draw inner BG rect shifted down to leave only top crescent
+  if (arc > 0.01) {
+    const insetX = 1 * arc;
+    const shiftDown = 6 * arc;
+    C.fillStyle = BG_COLOR;
+    fillRoundRect(x + insetX, y + shiftDown, ew - insetX * 2, eh, Math.min(r, eh / 2));
+  }
+
+  // Pupil (black center) — only when eye is open enough and not in arc mode
+  if (eh > 8 && arc <= 0.5) {
     const ps = pupilScale || 1;
     const pupilW = ew * 0.38 * ps;
     const pupilH = eh * 0.40 * ps;
@@ -353,8 +360,8 @@ function drawEye(cx, cy, baseW, baseH, r, ep, blink, pupilScale, gazeX, gazeY) {
     fillRoundRect(px, py, pupilW, pupilH, pupilR);
   }
 
-  // Angled top lid
-  if (ep.lidTop > 0.02 || Math.abs(ep.tiltTop) > 0.5) {
+  // Angled top lid — skip in arc mode
+  if (arc <= 0.5 && (ep.lidTop > 0.02 || Math.abs(ep.tiltTop) > 0.5)) {
     const lidH = eh * Math.max(ep.lidTop, 0) + Math.abs(ep.tiltTop);
     if (lidH > 0.5) {
       C.fillStyle = BG_COLOR;
@@ -369,8 +376,8 @@ function drawEye(cx, cy, baseW, baseH, r, ep, blink, pupilScale, gazeX, gazeY) {
     }
   }
 
-  // Angled bottom lid
-  if (ep.lidBot > 0.02 || Math.abs(ep.tiltBot) > 0.5) {
+  // Angled bottom lid — skip in arc mode
+  if (arc <= 0.5 && (ep.lidBot > 0.02 || Math.abs(ep.tiltBot) > 0.5)) {
     const lidH = eh * Math.max(ep.lidBot, 0) + Math.abs(ep.tiltBot);
     if (lidH > 0.5) {
       C.fillStyle = BG_COLOR;
@@ -548,8 +555,8 @@ function render() {
   const blinkL = Math.max(e.blinkL, sleepBlink);
   const blinkR = Math.max(e.blinkR, sleepBlink);
 
-  drawEye(leftCX, cy, e.baseW, e.baseH, e.cornerR, e.L, blinkL, e.pupilScale, e.gazeX, e.gazeY);
-  drawEye(rightCX, cy, e.baseW, e.baseH, e.cornerR, e.R, blinkR, e.pupilScale, e.gazeX, e.gazeY);
+  drawEye(leftCX, cy, e.baseW, e.baseH, e.cornerR, e.L, blinkL, e.pupilScale, e.gazeX, e.gazeY, e.arcAmount);
+  drawEye(rightCX, cy, e.baseW, e.baseH, e.cornerR, e.R, blinkR, e.pupilScale, e.gazeX, e.gazeY, e.arcAmount);
 
   renderStatus();
 }
@@ -588,6 +595,10 @@ function frame(ts) {
   const targetPS = preset.pupilScale || 1;
   e.pupilScale = smoothStep(e.pupilScale, targetPS, spd * 0.08, dt);
 
+  // Interpolate arc amount (0=filled eyes, 1=crescent arcs ⌒)
+  const targetArc = preset.arcAmount || 0;
+  e.arcAmount = smoothStep(e.arcAmount, targetArc, spd * 0.08, dt);
+
   // Gaze smoothing
   let gazeTargX = e.gazeTargX, gazeTargY = e.gazeTargY;
   if (lookOverride) {
@@ -624,22 +635,11 @@ function frame(ts) {
   }
 
   // Auto-blink
-  if (e.autoBlink && !e.sleeping && e.blinkLDir === 0 && e.mood !== 'happy') {
+  if (e.autoBlink && !e.sleeping && e.blinkLDir === 0) {
     e.blinkTimer -= dt;
     if (e.blinkTimer <= 0) {
       doBlink();
       e.blinkTimer = blinkMinS + Math.random() * (blinkMaxS - blinkMinS);
-    }
-  }
-
-  // Happy expression: alternating winks
-  if (e.mood === 'happy' && !e.sleeping && e.blinkLDir === 0 && e.blinkRDir === 0) {
-    e.happyWinkTimer -= dt;
-    if (e.happyWinkTimer <= 0) {
-      if (e.happyWinkSide === 0) doWinkL();
-      else doWinkR();
-      e.happyWinkSide = 1 - e.happyWinkSide;
-      e.happyWinkTimer = 0.8 + Math.random() * 1.2;
     }
   }
 
