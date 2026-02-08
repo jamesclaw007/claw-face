@@ -495,16 +495,17 @@ function renderStatus() {
   C.font = `${fontSize * S}px "Share Tech Mono", monospace`;
   C.textBaseline = 'top';
   C.textAlign = 'center';
-  C.fillStyle = '#006a8a';
-  const text = ss.displayText || '';
+  const statusColor = '#006a8a';
+  C.fillStyle = statusColor;
+  const text = (ss.displayText || '') + ' ';
   const textY = 54;
   C.fillText(text, (VW / 2) * S, textY * S);
 
-  // Blinking cursor
-  if (ss.phase === 'typing' || (ss.phase === 'hold' && Math.floor(Date.now() / 500) % 2 === 0)) {
+  // Cursor (steady)
+  if (ss.phase === 'typing' || ss.phase === 'hold') {
     const textW = C.measureText(text).width;
     const cursorX = (VW / 2) * S + textW / 2;
-    C.fillStyle = EYE_COLOR;
+    C.fillStyle = statusColor;
     C.fillRect(cursorX + 1, textY * S, 2 * S, fontSize * S);
   }
   C.textAlign = 'left';
