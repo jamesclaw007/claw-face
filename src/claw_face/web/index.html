@@ -239,7 +239,7 @@ const eye = {
   L: { w:0, h:0, offY:0, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, scaleX:1 },
   R: { w:0, h:0, offY:0, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, scaleX:1 },
   // Gaze
-  gazeTargX: 0, gazeTargY: 0, gazeX: 0, gazeY: 0, idleDriftX: 0, idleDriftY: 0,
+  gazeTargX: 0, gazeTargY: 0, gazeX: 0, gazeY: 0,
   // Blink (0=open, 1=closed)
   blinkL: 0, blinkR: 0, blinkLDir: 0, blinkRDir: 0,
   // Sleeping
@@ -255,10 +255,9 @@ const eye = {
   // Happy wink state
   happyWinkTimer: 0.5 + Math.random() * 0.8, happyWinkSide: 0,
   // Toggles
-  autoBlink: true, idleMove: true,
+  autoBlink: true,
   // Timers
   blinkTimer: 2 + Math.random() * 3,
-  saccadeTimer: 1 + Math.random() * 2,
 };
 
 // Auto-cycle
@@ -594,9 +593,6 @@ function frame(ts) {
   if (lookOverride) {
     gazeTargX = lookOverride.x;
     gazeTargY = lookOverride.y;
-  } else if (e.idleMove && e.gazeTargX === 0 && e.gazeTargY === 0 && !e.sleeping) {
-    gazeTargX = e.idleDriftX;
-    gazeTargY = e.idleDriftY;
   }
   const gazeSpd = (lookOverride || e.gazeTargX !== 0 || e.gazeTargY !== 0) ? 8 * 0.08 : 2 * 0.08;
   e.gazeX = smoothStep(e.gazeX, gazeTargX, gazeSpd, dt);
@@ -644,16 +640,6 @@ function frame(ts) {
       else doWinkR();
       e.happyWinkSide = 1 - e.happyWinkSide;
       e.happyWinkTimer = 0.8 + Math.random() * 1.2;
-    }
-  }
-
-  // Idle saccades
-  if (e.idleMove && !lookOverride && e.gazeTargX === 0 && e.gazeTargY === 0 && !e.sleeping) {
-    e.saccadeTimer -= dt;
-    if (e.saccadeTimer <= 0) {
-      e.idleDriftX = (Math.random() - 0.5) * 0.7;
-      e.idleDriftY = (Math.random() - 0.5) * 0.5;
-      e.saccadeTimer = 3.0 + Math.random() * 3.0;
     }
   }
 
