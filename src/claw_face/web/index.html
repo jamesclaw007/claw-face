@@ -502,6 +502,33 @@ const FONT_3x5 = {
   ' ':[0,0,0,0,0],
 };
 
+function wrapText(text, maxCharsPerLine) {
+  // Split text into lines with word-wrap support
+  const words = text.split(' ');
+  const lines = [];
+  let currentLine = '';
+
+  for (const word of words) {
+    const testLine = currentLine ? currentLine + ' ' + word : word;
+    if (testLine.length <= maxCharsPerLine) {
+      currentLine = testLine;
+    } else {
+      if (currentLine) lines.push(currentLine);
+      // If single word is too long, force split it
+      if (word.length > maxCharsPerLine) {
+        for (let i = 0; i < word.length; i += maxCharsPerLine) {
+          lines.push(word.substring(i, i + maxCharsPerLine));
+        }
+        currentLine = '';
+      } else {
+        currentLine = word;
+      }
+    }
+  }
+  if (currentLine) lines.push(currentLine);
+  return lines;
+}
+
 function renderBitmapStatus() {
   const ss = statusState;
   if (!ss.displayText && ss.phase === 'idle') return;
@@ -510,32 +537,46 @@ function renderBitmapStatus() {
   const statusColor = '#006a8a';
   OC.fillStyle = statusColor;
 
-  // 4px per char cell (3px glyph + 1px gap), centered on 128px width
-  const charW = 4;
-  const totalW = text.length * charW;
-  const startX = Math.floor((VW - totalW) / 2);
-  const startY = 57; // baseline for status text
+  const charW = 4; // 4px per char cell (3px glyph + 1px gap)
+  const lineH = 6; // 5px font + 1px gap between lines
+  const maxChars = 30; // max characters per line
 
-  for (let i = 0; i < text.length; i++) {
-    const glyph = FONT_3x5[text[i]];
-    if (!glyph) continue;
-    const cx = startX + i * charW;
-    for (let row = 0; row < 5; row++) {
-      const bits = glyph[row];
-      for (let col = 0; col < 3; col++) {
-        if (bits & (4 >> col)) {
-          OC.fillRect(cx + col, startY + row, 1, 1);
+  // Word-wrap into lines (max 2 lines)
+  const lines = wrapText(text, maxChars).slice(0, 2);
+  
+  // Calculate starting Y position to center multi-line text
+  const totalHeight = lines.length * lineH - 1;
+  let startY = 57; // single line baseline
+  if (lines.length === 2) startY = 54; // shift up for 2 lines
+
+  // Render each line
+  for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+    const line = lines[lineIdx];
+    const lineW = line.length * charW;
+    const startX = Math.floor((VW - lineW) / 2);
+    const y = startY + lineIdx * lineH;
+
+    for (let i = 0; i < line.length; i++) {
+      const glyph = FONT_3x5[line[i]];
+      if (!glyph) continue;
+      const cx = startX + i * charW;
+      for (let row = 0; row < 5; row++) {
+        const bits = glyph[row];
+        for (let col = 0; col < 3; col++) {
+          if (bits & (4 >> col)) {
+            OC.fillRect(cx + col, y + row, 1, 1);
+          }
         }
       }
     }
-  }
 
-  // Cursor — 3x5 block after text with slow blink
-  if (ss.phase === 'typing' || ss.phase === 'hold') {
-    if (ss.cursorVisible) {
-      const cursorX = startX + text.length * charW + 1;
-      for (let row = 0; row < 5; row++) {
-        OC.fillRect(cursorX, startY + row, 3, 1);  // 3px wide block
+    // Cursor — 3x5 block after last line's text with slow blink
+    if (lineIdx === lines.length - 1 && (ss.phase === 'typing' || ss.phase === 'hold')) {
+      if (ss.cursorVisible) {
+        const cursorX = startX + line.length * charW + 1;
+        for (let row = 0; row < 5; row++) {
+          OC.fillRect(cursorX, y + row, 3, 1);  // 3px wide block
+        }
       }
     }
   }
