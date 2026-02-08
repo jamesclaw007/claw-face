@@ -397,7 +397,6 @@ const statusState = {
   phase: 'idle',     // 'idle' | 'typing' | 'hold' | 'erasing' | 'erase_then_type'
   timer: 0,
   typeSpeed: 0.04,
-  holdTime: 5.0,
   eraseSpeed: 0.02,
   pendingText: null,  // queued text to type after erase
   serverText: '',     // last text received from server
@@ -457,10 +456,8 @@ function updateStatus(dt) {
       // New text waiting — start erasing
       ss.phase = 'erase_then_type';
       ss.timer = 0;
-    } else if (ss.timer >= ss.holdTime) {
-      ss.phase = 'erasing';
-      ss.timer = 0;
     }
+    // No auto-erase — status persists until server clears or changes it
   } else if (ss.phase === 'erasing' || ss.phase === 'erase_then_type') {
     if (ss.timer >= ss.eraseSpeed) {
       ss.timer = 0;
@@ -498,7 +495,7 @@ function renderStatus() {
   C.fillText(text, (VW / 2) * S, textY * S);
 
   // Blinking cursor
-  if (ss.phase === 'typing' || (ss.phase === 'hold' && Math.floor(Date.now() / 500) % 2 === 0)) {
+  if (ss.phase === 'typing') {
     const textW = C.measureText(text).width;
     const cursorX = (VW / 2) * S + textW / 2;
     C.fillStyle = EYE_COLOR;
