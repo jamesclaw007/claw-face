@@ -4,9 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Claw Face</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-
     body {
       background: #000;
       overflow: hidden;
@@ -17,182 +17,206 @@
       justify-content: center;
       cursor: none;
     }
-
     canvas { display: block; }
-
-    /* ---- Status display ---- */
-    #status {
-      position: fixed;
-      bottom: 30px;
-      left: 50%;
-      transform: translateX(-50%);
-      font-family: 'Courier New', monospace;
-      font-size: 15px;
-      font-weight: 600;
-      color: rgba(200, 205, 215, 0.92);
-      letter-spacing: 0.8px;
-      white-space: nowrap;
-      max-width: min(92vw, 1200px);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      padding: 8px 12px;
-      border-radius: 10px;
-      background: linear-gradient(
-        to bottom,
-        rgba(0, 0, 0, 0.28),
-        rgba(0, 0, 0, 0.06)
-      );
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      text-shadow: 0 1px 0 rgba(0, 0, 0, 0.65);
-      opacity: 0;
-      transition: opacity 1.5s ease;
-      z-index: 10;
+    .scanlines {
+      position: absolute;
       pointer-events: none;
+      background-image:
+        linear-gradient(rgba(0,0,0,0.06) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,0,0,0.06) 1px, transparent 1px);
+      opacity: 0.6;
     }
-    #status.visible { opacity: 1; }
   </style>
 </head>
 <body>
-  <canvas id="c"></canvas>
-
-  <div id="status"></div>
-
+  <canvas id="oled"></canvas>
+  <div class="scanlines" id="scanlines"></div>
 
 <script>
 // ============================================================
-// CANVAS SETUP
+// OLED ROBOT EYES ENGINE — Cozmo-inspired parametric system
+// Replaces dot-matrix renderer. Single-file, no external deps.
 // ============================================================
-const canvas = document.getElementById('c');
-const ctx = canvas.getContext('2d');
 
-// Dot-matrix tuning (bigger spacing/radius = fewer dots for same face size)
-let DOT_R = 6.5;
-let DOT_SPACING = 17.0;
-let DOT_COLOR = '#d8dce8';
-let BG_COLOR = '#010108';
+const canvas = document.getElementById('oled');
+const C = canvas.getContext('2d');
 
-let W, H, cx, cy;
+// Virtual OLED dimensions and scale
+const VW = 128, VH = 64;
+let S = 4; // scale factor, recalculated on resize
 
-// Cached vignette + scanline overlay
-let overlayCanvas, overlayCtx;
+let EYE_COLOR = '#00b8ff';
+let BG_COLOR = '#000000';
+
+const scanlines = document.getElementById('scanlines');
 
 function resize() {
-  W = window.innerWidth;
-  H = window.innerHeight;
-  canvas.width = W;
-  canvas.height = H;
-  cx = W / 2;
-  cy = H / 2 - H * 0.06;
+  // Fill the screen, maintaining the 2:1 aspect ratio of the virtual OLED
+  const ww = window.innerWidth, wh = window.innerHeight;
+  const aspect = VW / VH; // 2:1
+  let w, h;
+  if (ww / wh > aspect) {
+    h = wh;
+    w = h * aspect;
+  } else {
+    w = ww;
+    h = w / aspect;
+  }
+  S = w / VW;
+  canvas.width = Math.round(w);
+  canvas.height = Math.round(h);
 
-  // Pre-render static overlay (vignette + scanlines)
-  overlayCanvas = document.createElement('canvas');
-  overlayCanvas.width = W;
-  overlayCanvas.height = H;
-  overlayCtx = overlayCanvas.getContext('2d');
-  _renderOverlay();
+  // Position grid overlay to match canvas
+  const grid = Math.round(S) + 'px';
+  scanlines.style.width = canvas.width + 'px';
+  scanlines.style.height = canvas.height + 'px';
+  scanlines.style.left = ((ww - canvas.width) / 2) + 'px';
+  scanlines.style.top = ((wh - canvas.height) / 2) + 'px';
+  scanlines.style.backgroundSize = grid + ' ' + grid;
 }
-
-function _renderOverlay() {
-  // Scanlines
-  overlayCtx.fillStyle = 'rgba(0,0,0,0.04)';
-  for (let y = 0; y < H; y += 3) overlayCtx.fillRect(0, y, W, 1);
-  // Vignette
-  const g = overlayCtx.createRadialGradient(cx, cy, Math.min(W,H)*0.2, cx, cy, Math.max(W,H)*0.72);
-  g.addColorStop(0, 'rgba(0,0,0,0)');
-  g.addColorStop(1, 'rgba(0,0,0,0.5)');
-  overlayCtx.fillStyle = g;
-  overlayCtx.fillRect(0, 0, W, H);
-}
-
 window.addEventListener('resize', resize);
 resize();
 
 // ============================================================
-// UTILITY FUNCTIONS
+// EASING
 // ============================================================
-function rnd(a, b) { return a + Math.random() * (b - a); }
-function ease(t) { return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2; }
 function lerp(a, b, t) { return a + (b - a) * t; }
+function smoothStep(a, b, speed, dt) {
+  return lerp(a, b, 1 - Math.pow(1 - speed, dt * 60));
+}
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
-function expToward(cur, tgt, dtMs, halfLifeMs) {
-  // Exponential smoothing with a half-life in milliseconds.
-  if (halfLifeMs <= 0) return tgt;
-  const k = Math.pow(0.5, dtMs / halfLifeMs);
-  return tgt + (cur - tgt) * k;
+
+// ============================================================
+// EXPRESSION PRESETS (Cozmo/esp32-eyes style)
+// Per-eye: w, h (size add), offY, tiltTop/tiltBot (lid angle px),
+//   lidTop/lidBot (closure 0-1), scaleX
+// ============================================================
+const PRESETS = {
+  normal: {
+    L: { w:0, h:0, offY:0, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, scaleX:1 },
+    R: { w:0, h:0, offY:0, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, scaleX:1 },
+    transitionSpeed: 6,
+  },
+  happy: {
+    L: { w:0, h:0, offY:0, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, scaleX:1 },
+    R: { w:0, h:0, offY:0, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, scaleX:1 },
+    pupilScale: 1.5, transitionSpeed: 7,
+  },
+  sad: {
+    L: { w:-2, h:-3, offY:2, tiltTop:5, tiltBot:0, lidTop:0.25, lidBot:0, scaleX:0.95 },
+    R: { w:-2, h:-3, offY:2, tiltTop:-5, tiltBot:0, lidTop:0.25, lidBot:0, scaleX:0.95 },
+    transitionSpeed: 4,
+  },
+  angry: {
+    L: { w:3, h:-4, offY:0, tiltTop:-7, tiltBot:0, lidTop:0.38, lidBot:0, scaleX:1.08 },
+    R: { w:3, h:-4, offY:0, tiltTop:7, tiltBot:0, lidTop:0.38, lidBot:0, scaleX:1.08 },
+    transitionSpeed: 8,
+  },
+  surprised: {
+    L: { w:6, h:8, offY:-2, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, scaleX:1 },
+    R: { w:6, h:8, offY:-2, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, scaleX:1 },
+    transitionSpeed: 10,
+  },
+  suspicious: {
+    L: { w:1, h:-8, offY:1, tiltTop:-4, tiltBot:2, lidTop:0.30, lidBot:0.20, scaleX:1.1 },
+    R: { w:-2, h:-4, offY:0, tiltTop:0, tiltBot:0, lidTop:0.10, lidBot:0, scaleX:0.9 },
+    transitionSpeed: 5,
+  },
+  cute: {
+    L: { w:5, h:5, offY:1, tiltTop:0, tiltBot:-2, lidTop:0, lidBot:0.30, scaleX:1 },
+    R: { w:5, h:5, offY:1, tiltTop:0, tiltBot:2, lidTop:0, lidBot:0.30, scaleX:1 },
+    transitionSpeed: 6,
+  },
+  tired: {
+    L: { w:-1, h:-6, offY:3, tiltTop:3, tiltBot:0, lidTop:0.42, lidBot:0, scaleX:0.95 },
+    R: { w:-1, h:-6, offY:3, tiltTop:-3, tiltBot:0, lidTop:0.42, lidBot:0, scaleX:0.95 },
+    transitionSpeed: 3,
+  },
+  wonder: {
+    L: { w:4, h:7, offY:-1, tiltTop:2, tiltBot:0, lidTop:0, lidBot:0, scaleX:0.95 },
+    R: { w:6, h:9, offY:-2, tiltTop:-2, tiltBot:0, lidTop:0, lidBot:0, scaleX:1.05 },
+    transitionSpeed: 6,
+  },
+  upset: {
+    L: { w:0, h:-2, offY:2, tiltTop:6, tiltBot:-2, lidTop:0.18, lidBot:0.10, scaleX:1 },
+    R: { w:0, h:-2, offY:2, tiltTop:-6, tiltBot:2, lidTop:0.18, lidBot:0.10, scaleX:1 },
+    transitionSpeed: 5,
+  },
+  confused: {
+    L: { w:-3, h:2, offY:-2, tiltTop:4, tiltBot:0, lidTop:0.15, lidBot:0, scaleX:0.9 },
+    R: { w:4, h:4, offY:1, tiltTop:-2, tiltBot:0, lidTop:0, lidBot:0, scaleX:1.1 },
+    transitionSpeed: 6,
+  },
+  scared: {
+    L: { w:5, h:8, offY:-1, tiltTop:4, tiltBot:0, lidTop:0, lidBot:0.05, scaleX:0.92 },
+    R: { w:5, h:8, offY:-1, tiltTop:-4, tiltBot:0, lidTop:0, lidBot:0.05, scaleX:0.92 },
+    transitionSpeed: 10,
+  },
+  sleepy: {
+    L: { w:-2, h:-12, offY:4, tiltTop:2, tiltBot:0, lidTop:0.55, lidBot:0, scaleX:1 },
+    R: { w:-2, h:-12, offY:4, tiltTop:-2, tiltBot:0, lidTop:0.55, lidBot:0, scaleX:1 },
+    transitionSpeed: 2,
+  },
+  glee: {
+    L: { w:3, h:-4, offY:0, tiltTop:0, tiltBot:-5, lidTop:0, lidBot:0.50, scaleX:1.1 },
+    R: { w:3, h:-4, offY:0, tiltTop:0, tiltBot:5, lidTop:0, lidBot:0.50, scaleX:1.1 },
+    transitionSpeed: 8,
+  },
+  skeptic: {
+    L: { w:0, h:0, offY:0, tiltTop:-5, tiltBot:0, lidTop:0.35, lidBot:0, scaleX:1 },
+    R: { w:2, h:4, offY:-1, tiltTop:2, tiltBot:0, lidTop:0, lidBot:0, scaleX:1 },
+    transitionSpeed: 5,
+  },
+};
+
+// Compatibility map: old expression names -> new canonical names
+const COMPAT_MAP = {
+  neutral: 'normal',
+  love: 'cute',
+  focused: 'suspicious',
+  thinking: 'skeptic',
+  excited: 'glee',
+  glitch: 'scared',
+  smug: 'skeptic',
+  sleep: 'sleepy',
+};
+
+// All known expression names (canonical + compat)
+const KNOWN_EXPRS = new Set([
+  ...Object.keys(PRESETS),
+  ...Object.keys(COMPAT_MAP),
+  'wink', 'talking', 'typing',
+]);
+
+// Resolve an expression name, applying compat mapping
+function resolveExpr(name) {
+  if (name === 'wink') return '__wink__';
+  if (name === 'talking' || name === 'typing') return 'normal';
+  if (PRESETS[name]) return name;
+  if (COMPAT_MAP[name]) return COMPAT_MAP[name];
+  return null;
 }
 
 // ============================================================
-// ANIMATION STATE
-// ============================================================
-let currentExpr = 'neutral';
-let targetExpr = 'neutral';
-let morphT = 1;
-const MORPH_SPEED = 3.5;
-
-// Blink
-let blinkAmt = 0, blinkPhase = 0, blinkTimer = 0;
-let blinkMinMs = 3000;
-let blinkMaxMs = 5500;
-let blinkInterval = rnd(blinkMinMs, blinkMaxMs);
-let blinkQueue = 0;
-let blinkInterDelayMs = 120;
-let blinkInterTimer = 0;
-let blinkCloseRate = 0.009;
-let blinkOpenRate = 0.007;
-
-// Look direction
-let lookX = 0, lookY = 0, targetLookX = 0, targetLookY = 0;
-let lookTimer = 0, lookInterval = rnd(2000, 5000);
-let lookMinMs = 2000;
-let lookMaxMs = 5000;
-let lookJumpMs = 0;
-let lookJumpDurMs = 120;
-
-// Slight per-eye asymmetry so the face doesn't feel perfectly mirrored.
-let eyeNoiseLX = 0, eyeNoiseLY = 0, eyeNoiseRX = 0, eyeNoiseRY = 0;
-let eyeNoiseTLX = 0, eyeNoiseTLY = 0, eyeNoiseTRX = 0, eyeNoiseTRY = 0;
-let eyeNoiseTimer = 0, eyeNoiseInterval = rnd(3000, 7000);
-
-// Breathing & talk
-let breathPhase = 0, talkPhase = 0;
-
-// External command (v2)
-let cmdIntensity = null; // number in [0,1] or null (default behavior)
-let animIntensity = 1.0; // smoothed intensity actually applied
-let lookOverride = null; // {x,y} or null
-let lastBlinkSeq = null;
-let lastSequenceSeq = null;
-let activeSequence = null; // {name, untilMs} or null
-let glitchPulseUntilMs = 0;
-
-// ============================================================
-// EXPRESSION AUTO-CYCLING (weighted random)
+// EXPRESSION WEIGHTS (for auto-cycling)
 // ============================================================
 const EXPRESSION_WEIGHTS = {
-  neutral:   22,
-  happy:     26,
-  sad:        4,
-  angry:      3,
-  surprised:  6,
-  sleepy:    10,
-  wink:       9,
-  love:       6,
-  talking:    5,
-  focused:    6,
-  thinking:   6,
-  typing:     3,
-  excited:    4,
-  smug:       3,
-  confused:   3,
-  glitch:     1,
-  sleep:      2,
+  normal:     25,
+  happy:      35,
+  sad:         5,
+  angry:       3,
+  surprised:   8,
+  suspicious:  6,
+  cute:        6,
+  tired:       4,
+  wonder:      5,
+  upset:       3,
+  confused:    3,
+  scared:      1,
+  sleepy:     12,
+  glee:        4,
+  skeptic:     6,
 };
-
-let autoCycleEnabled = true;
-let autoCycleTimer = 0;
-let exprMinMs = 8000;
-let exprMaxMs = 20000;
-let autoCycleInterval = rnd(exprMinMs, exprMaxMs);
 
 function weightedRandomExpression() {
   const names = Object.keys(EXPRESSION_WEIGHTS);
@@ -207,719 +231,600 @@ function weightedRandomExpression() {
 }
 
 // ============================================================
-// SHAPE PRIMITIVES (dot-matrix geometry)
+// STATE
 // ============================================================
-function dotsCircle(ox, oy, r) {
-  const dots = [], step = DOT_SPACING;
-  if (r < 1) return dots;
-  const x0 = Math.ceil((ox - r) / step) * step;
-  const y0 = Math.ceil((oy - r) / step) * step;
-  for (let y = y0; y <= oy + r; y += step) {
-    for (let x = x0; x <= ox + r; x += step) {
-      const dx = x - ox, dy = y - oy;
-      if (dx*dx + dy*dy <= r*r) dots.push([x, y]);
-    }
-  }
-  return dots;
+const eye = {
+  baseW: 28, baseH: 36, gap: 40, cornerR: 8,
+  // Current per-eye interpolated state
+  L: { w:0, h:0, offY:0, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, scaleX:1 },
+  R: { w:0, h:0, offY:0, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, scaleX:1 },
+  // Gaze
+  gazeTargX: 0, gazeTargY: 0, gazeX: 0, gazeY: 0, idleDriftX: 0, idleDriftY: 0,
+  // Blink (0=open, 1=closed)
+  blinkL: 0, blinkR: 0, blinkLDir: 0, blinkRDir: 0,
+  // Sleeping
+  sleeping: false, sleepT: 0,
+  // Confusion offset
+  confL: 0, confR: 0, confTimer: 0,
+  // Transition speed
+  tSpeed: 6,
+  // Pupil scale modifier
+  pupilScale: 1,
+  // Current mood
+  mood: 'normal',
+  // Happy wink state
+  happyWinkTimer: 0.5 + Math.random() * 0.8, happyWinkSide: 0,
+  // Toggles
+  autoBlink: true, idleMove: true,
+  // Timers
+  blinkTimer: 2 + Math.random() * 3,
+  saccadeTimer: 1 + Math.random() * 2,
+};
+
+// Auto-cycle
+let autoCycleEnabled = true;
+let autoCycleTimer = 0;
+let exprMinMs = 8000;
+let exprMaxMs = 20000;
+let autoCycleInterval = exprMinMs + Math.random() * (exprMaxMs - exprMinMs);
+
+// Blink timing (configurable from /api/config)
+let blinkMinS = 1.5;
+let blinkMaxS = 4.0;
+
+// Look timing
+let lookMinS = 1.0;
+let lookMaxS = 3.0;
+
+// External command state
+let cmdIntensity = null;
+let lookOverride = null;
+let lastBlinkSeq = null;
+let lastSequenceSeq = null;
+let activeSequence = null;
+
+// FPS throttle
+let TARGET_FPS = 30;
+let FRAME_TIME = 1000 / TARGET_FPS;
+
+function setMood(name) {
+  if (!PRESETS[name]) return;
+  eye.mood = name;
+  eye.tSpeed = PRESETS[name].transitionSpeed;
+  eye.happyWinkTimer = 0.5 + Math.random() * 0.8;
+  eye.happyWinkSide = 0;
 }
 
-function dotsEllipse(ox, oy, rx, ry) {
-  const dots = [], step = DOT_SPACING;
-  if (rx < 1 || ry < 1) return dots;
-  const x0 = Math.ceil((ox - rx) / step) * step;
-  const y0 = Math.ceil((oy - ry) / step) * step;
-  for (let y = y0; y <= oy + ry; y += step) {
-    for (let x = x0; x <= ox + rx; x += step) {
-      const dx = (x - ox) / rx, dy = (y - oy) / ry;
-      if (dx*dx + dy*dy <= 1) dots.push([x, y]);
-    }
+function setExpression(rawName) {
+  const resolved = resolveExpr(rawName);
+  if (!resolved) return;
+  if (resolved === '__wink__') {
+    doWinkL();
+    setMood('happy');
+    return;
   }
-  return dots;
-}
-
-function dotsHalfCircle(ox, oy, r, side) {
-  const dots = [], step = DOT_SPACING;
-  if (r < 1) return dots;
-  const x0 = Math.ceil((ox - r) / step) * step;
-  const y0 = Math.ceil((oy - r) / step) * step;
-  for (let y = y0; y <= oy + r; y += step) {
-    for (let x = x0; x <= ox + r; x += step) {
-      const dx = x - ox, dy = y - oy;
-      if (dx*dx + dy*dy <= r*r) {
-        if (side === 'top' && dy <= step * 0.5) dots.push([x, y]);
-        else if (side === 'bottom' && dy >= -step * 0.5) dots.push([x, y]);
-      }
-    }
-  }
-  return dots;
-}
-
-function dotsLine(ox, oy, width, thickness) {
-  const dots = [], step = DOT_SPACING;
-  const hw = width / 2, ht = Math.max(thickness, step * 0.4) / 2;
-  const x0 = Math.ceil((ox - hw) / step) * step;
-  const y0 = Math.ceil((oy - ht) / step) * step;
-  for (let y = y0; y <= oy + ht; y += step) {
-    for (let x = x0; x <= ox + hw; x += step) {
-      dots.push([x, y]);
-    }
-  }
-  return dots;
-}
-
-function dotsArc(ox, oy, radius, startA, endA, thick) {
-  const dots = [], step = DOT_SPACING;
-  if (radius < 1) return dots;
-  const bound = radius + thick + step;
-  const x0 = Math.ceil((ox - bound) / step) * step;
-  const y0 = Math.ceil((oy - bound) / step) * step;
-  for (let y = y0; y <= oy + bound; y += step) {
-    for (let x = x0; x <= ox + bound; x += step) {
-      const dx = x - ox, dy = y - oy;
-      const dist = Math.sqrt(dx*dx + dy*dy);
-      if (dist < radius - thick || dist > radius + thick) continue;
-      let a = Math.atan2(dy, dx);
-      if (a < 0) a += Math.PI * 2;
-      let s = startA, e = endA;
-      if (s < 0) s += Math.PI * 2;
-      if (e < 0) e += Math.PI * 2;
-      const ok = s <= e ? (a >= s && a <= e) : (a >= s || a <= e);
-      if (ok) dots.push([x, y]);
-    }
-  }
-  return dots;
-}
-
-function dotsHeart(ox, oy, size) {
-  const dots = [], step = DOT_SPACING;
-  if (size < 2) return dots;
-  const x0 = Math.ceil((ox - size * 1.2) / step) * step;
-  const y0 = Math.ceil((oy - size * 1.2) / step) * step;
-  for (let y = y0; y <= oy + size * 1.4; y += step) {
-    for (let x = x0; x <= ox + size * 1.2; x += step) {
-      const nx = (x - ox) / size, ny = -(y - oy) / size + 0.2;
-      const eq = nx*nx + ny*ny - 1;
-      if (eq*eq*eq - nx*nx * ny*ny*ny <= 0) dots.push([x, y]);
-    }
-  }
-  return dots;
-}
-
-// Alias for closed-eye line
-function dotsInLine(ox, oy, w, t) { return dotsLine(ox, oy, w, t); }
-
-// ============================================================
-// EXPRESSION BUILDER
-// ============================================================
-function buildExpr(name, s, lx, ly, blink, talk, intensity) {
-  const I = clamp(typeof intensity === 'number' ? intensity : 1, 0, 1);
-  const sep = 80 * s;
-  const eyeY = cy - 30 * s;
-  const mouthY = cy + 65 * s;
-  const R = 32 * s;
-  const lOx = lx * 6 * s, lOy = ly * 4 * s;
-  const leX = cx - sep + lOx + eyeNoiseLX * 4 * s;
-  const reX = cx + sep + lOx + eyeNoiseRX * 4 * s;
-  const leY = eyeY + lOy + eyeNoiseLY * 3 * s;
-  const reY = eyeY + lOy + eyeNoiseRY * 3 * s;
-  const b = 1 - blink;
-  let le, re, mo;
-  let ex = [];
-
-  const closedL = () => dotsInLine(leX, leY, R * 1.5, DOT_SPACING);
-  const closedR = () => dotsInLine(reX, reY, R * 1.5, DOT_SPACING);
-
-  function stdEyes(ry) {
-    if (ry < DOT_SPACING) return [closedL(), closedR()];
-    return [dotsCircle(leX, leY, ry), dotsCircle(reX, reY, ry)];
-  }
-
-  switch (name) {
-    case 'neutral': {
-      [le, re] = stdEyes(R * b);
-      mo = dotsArc(cx, mouthY, 35*s, Math.PI*0.15, Math.PI*0.85, 4.5*s);
-      break;
-    }
-    case 'happy': {
-      const ry = R * 0.9 * b;
-      if (ry < DOT_SPACING) { le = closedL(); re = closedR(); }
-      else {
-        le = dotsHalfCircle(leX, leY + ry*0.35, ry*0.9, 'top');
-        re = dotsHalfCircle(reX, reY + ry*0.35, ry*0.9, 'top');
-      }
-      mo = dotsArc(cx, mouthY - 8*s, 42*s, Math.PI*0.08, Math.PI*0.92, 5.5*s);
-      break;
-    }
-    case 'sad': {
-      const ry = R * 0.85 * b;
-      if (ry < DOT_SPACING) { le = closedL(); re = closedR(); }
-      else { le = dotsCircle(leX, leY + 4*s, ry); re = dotsCircle(reX, reY + 4*s, ry); }
-      mo = dotsArc(cx, mouthY + 25*s, 30*s, Math.PI*1.15, Math.PI*1.85, 4*s);
-      break;
-    }
-    case 'angry': {
-      const ry = R * 0.55 * b;
-      if (ry < DOT_SPACING) { le = closedL(); re = closedR(); }
-      else {
-        le = dotsEllipse(leX, leY + 6*s, R*1.15, ry);
-        re = dotsEllipse(reX, reY + 6*s, R*1.15, ry);
-      }
-      mo = dotsLine(cx, mouthY + 5*s, 50*s, 5*s);
-      // Brows (simple straight lines)
-      ex = ex.concat(
-        dotsLine(leX + 6*s, leY - R*0.95, R*1.15, 3.5*s),
-        dotsLine(reX - 6*s, reY - R*0.95, R*1.15, 3.5*s),
-      );
-      break;
-    }
-    case 'surprised': {
-      const big = R * 1.25 * b;
-      if (big < DOT_SPACING) { le = closedL(); re = closedR(); }
-      else { le = dotsCircle(leX, leY - 5*s, big); re = dotsCircle(reX, reY - 5*s, big); }
-      mo = dotsEllipse(cx, mouthY + 8*s, 14*s, 18*s);
-      break;
-    }
-    case 'sleepy': {
-      const ry = R * 0.22 * b;
-      if (ry < DOT_SPACING) {
-        le = dotsLine(leX, leY + 10*s, R*1.3, DOT_SPACING);
-        re = dotsLine(reX, reY + 10*s, R*1.3, DOT_SPACING);
-      } else {
-        le = dotsEllipse(leX, leY + 10*s, R*1.1, ry);
-        re = dotsEllipse(reX, reY + 10*s, R*1.1, ry);
-      }
-      mo = dotsArc(cx, mouthY, 20*s, Math.PI*0.2, Math.PI*0.8, 3.5*s);
-      break;
-    }
-    case 'wink': {
-      const ry = R * b;
-      re = ry < DOT_SPACING ? closedR() : dotsCircle(reX, reY, ry);
-      le = dotsArc(leX, leY + R*0.1, R*0.7, Math.PI*0.05, Math.PI*0.95, 3*s);
-      mo = dotsArc(cx + 4*s, mouthY - 2*s, 36*s, Math.PI*0.1, Math.PI*0.85, 4.5*s);
-      break;
-    }
-    case 'love': {
-      const hs = 24*s * (b*0.25 + 0.75);
-      le = dotsHeart(leX, leY + 2*s, hs);
-      re = dotsHeart(reX, reY + 2*s, hs);
-      mo = dotsArc(cx, mouthY - 5*s, 38*s, Math.PI*0.08, Math.PI*0.92, 5*s);
-      break;
-    }
-    case 'talking': {
-      [le, re] = stdEyes(R * b);
-      const amp = (0.25 + 0.75 * I);
-      const mrx = 18*s + Math.abs(Math.sin(talk)) * (12*s * amp);
-      const mry = 10*s + Math.abs(Math.sin(talk)) * (16*s * amp);
-      mo = dotsEllipse(cx, mouthY + 5*s, mrx, mry);
-      break;
-    }
-    case 'focused': {
-      const ry = R * 0.48 * b;
-      if (ry < DOT_SPACING) { le = closedL(); re = closedR(); }
-      else {
-        le = dotsEllipse(leX, leY + 4*s, R*1.1, ry);
-        re = dotsEllipse(reX, reY + 4*s, R*1.1, ry);
-      }
-      mo = dotsLine(cx, mouthY + 6*s, 42*s, 4.0*s);
-      ex = ex.concat(
-        dotsLine(leX + 8*s, leY - R*0.95, R*1.1, 3.2*s),
-        dotsLine(reX - 8*s, reY - R*0.95, R*1.1, 3.2*s),
-      );
-      break;
-    }
-    case 'thinking': {
-      [le, re] = stdEyes(R * 0.95 * b);
-      mo = dotsArc(cx, mouthY + 3*s, 24*s, Math.PI*0.15, Math.PI*0.85, 3.8*s);
-      // Small "thought" dot near the temple.
-      ex = ex.concat(dotsCircle(leX - R*1.25, leY - R*0.1, 6*s));
-      break;
-    }
-    case 'typing': {
-      // A calmer talking, plus three dots.
-      [le, re] = stdEyes(R * 0.9 * b);
-      const amp = (0.2 + 0.8 * I);
-      const mrx = 14*s + Math.abs(Math.sin(talk)) * (8*s * amp);
-      const mry = 7*s + Math.abs(Math.sin(talk)) * (10*s * amp);
-      mo = dotsEllipse(cx, mouthY + 7*s, mrx, mry);
-      break;
-    }
-    case 'excited': {
-      const big = R * 1.15 * b;
-      if (big < DOT_SPACING) { le = closedL(); re = closedR(); }
-      else {
-        le = dotsCircle(leX, leY - 2*s, big);
-        re = dotsCircle(reX, reY - 2*s, big);
-      }
-      mo = dotsEllipse(cx, mouthY + 10*s, 24*s, 24*s);
-      break;
-    }
-    case 'smug': {
-      const ry = R * 0.85 * b;
-      // Left eye slightly squinted.
-      const sly = R * 0.28 * b;
-      le = sly < DOT_SPACING ? closedL() : dotsEllipse(leX, leY + 8*s, R*1.05, sly);
-      re = ry < DOT_SPACING ? closedR() : dotsCircle(reX, reY, ry);
-      mo = dotsArc(cx + 14*s, mouthY + 2*s, 30*s, Math.PI*0.10, Math.PI*0.78, 4.3*s);
-      ex = ex.concat(dotsLine(reX - 12*s, reY - R*0.95, R*1.05, 3.2*s));
-      break;
-    }
-    case 'confused': {
-      const r1 = R * 0.8 * b;
-      const r2 = R * 0.6 * b;
-      le = r1 < DOT_SPACING ? closedL() : dotsCircle(leX, leY - 5*s, r1);
-      re = r2 < DOT_SPACING ? closedR() : dotsEllipse(reX, reY + 6*s, R*1.05, r2);
-      mo = dotsArc(cx, mouthY + 20*s, 24*s, Math.PI*1.05, Math.PI*1.65, 3.8*s);
-      ex = ex.concat(dotsLine(leX + 10*s, leY - R*1.05, R*1.0, 3.0*s));
-      break;
-    }
-    case 'glitch': {
-      [le, re] = stdEyes(R * b);
-      mo = dotsArc(cx, mouthY, 35*s, Math.PI*0.15, Math.PI*0.85, 4.5*s);
-      break;
-    }
-    case 'sleep': {
-      // Fully "off" / closed.
-      le = dotsLine(leX, leY + 12*s, R*1.45, DOT_SPACING);
-      re = dotsLine(reX, reY + 12*s, R*1.45, DOT_SPACING);
-      mo = dotsArc(cx, mouthY + 10*s, 18*s, Math.PI*0.20, Math.PI*0.80, 3.2*s);
-      break;
-    }
-    default: {
-      [le, re] = stdEyes(R);
-      mo = dotsArc(cx, mouthY, 35*s, Math.PI*0.15, Math.PI*0.85, 4.5*s);
-    }
-  }
-
-  return { le, re, mo, ex };
+  eye.sleeping = false;
+  setMood(resolved);
 }
 
 // ============================================================
-// INTERPOLATION & RENDERING
+// DRAWING PRIMITIVES
 // ============================================================
-function morphDots(from, to, t) {
-  const res = [], len = Math.max(from.length, to.length);
-  if (!len) return res;
-  for (let i = 0; i < len; i++) {
-    const f = from[i % from.length] || to[i];
-    const g = to[i % to.length] || from[i];
-    res.push([
-      lerp(f[0], g[0], t),
-      lerp(f[1], g[1], t),
-      i < to.length ? (i < from.length ? 1 : t) : (1 - t)
-    ]);
-  }
-  return res;
+function fillRoundRect(x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  if (r < 0) r = 0;
+  C.beginPath();
+  C.moveTo((x + r) * S, y * S);
+  C.lineTo((x + w - r) * S, y * S);
+  C.quadraticCurveTo((x + w) * S, y * S, (x + w) * S, (y + r) * S);
+  C.lineTo((x + w) * S, (y + h - r) * S);
+  C.quadraticCurveTo((x + w) * S, (y + h) * S, (x + w - r) * S, (y + h) * S);
+  C.lineTo((x + r) * S, (y + h) * S);
+  C.quadraticCurveTo(x * S, (y + h) * S, x * S, (y + h - r) * S);
+  C.lineTo(x * S, (y + r) * S);
+  C.quadraticCurveTo(x * S, y * S, (x + r) * S, y * S);
+  C.closePath();
+  C.fill();
 }
 
-function drawDots(dots, jitterPx = 0) {
-  const jitter = Math.max(0, Number(jitterPx) || 0);
+function drawEye(cx, cy, baseW, baseH, r, ep, blink, pupilScale, gazeX, gazeY) {
+  const ew = (baseW + ep.w) * ep.scaleX;
+  const fullH = baseH + ep.h;
+  const minH = 3;
+  const eh = Math.max(minH, fullH * (1 - blink));
+  const oy = ep.offY * (1 - blink * 0.7);
+  const x = cx - ew / 2;
+  const y = cy - eh / 2 + oy;
 
-  // For glitch/jitter, per-dot offsets break batching; draw individually.
-  if (jitter > 0.01) {
-    ctx.fillStyle = DOT_COLOR;
-    for (const d of dots) {
-      const a = d[2] ?? 1;
-      if (a < 0.04) continue;
-      const jx = (Math.random() - 0.5) * jitter;
-      const jy = (Math.random() - 0.5) * jitter;
-      if (a < 0.96) ctx.globalAlpha = a;
-      ctx.beginPath();
-      ctx.arc(d[0] + jx, d[1] + jy, DOT_R, 0, Math.PI * 2);
-      ctx.fill();
-      if (a < 0.96) ctx.globalAlpha = 1;
+  // Main eye shape
+  C.fillStyle = EYE_COLOR;
+  fillRoundRect(x, y, ew, eh, Math.min(r, eh / 2));
+
+  // Pupil (black center) — only when eye is open enough
+  if (eh > 8) {
+    const ps = pupilScale || 1;
+    const pupilW = ew * 0.38 * ps;
+    const pupilH = eh * 0.40 * ps;
+    const pupilR = Math.min(Math.min(r, pupilW / 2, pupilH / 2), 6 * ps);
+    const maxShiftX = (ew - pupilW) * 0.45;
+    const maxShiftY = (eh - pupilH) * 0.45;
+    const px = cx - pupilW / 2 + gazeX * maxShiftX;
+    const py = cy + oy - pupilH / 2 + gazeY * maxShiftY;
+    C.fillStyle = BG_COLOR;
+    fillRoundRect(px, py, pupilW, pupilH, pupilR);
+  }
+
+  // Angled top lid
+  if (ep.lidTop > 0.02 || Math.abs(ep.tiltTop) > 0.5) {
+    const lidH = eh * Math.max(ep.lidTop, 0) + Math.abs(ep.tiltTop);
+    if (lidH > 0.5) {
+      C.fillStyle = BG_COLOR;
+      C.beginPath();
+      const lx = (x - 2) * S, rx = (x + ew + 2) * S;
+      const lyTop = (y - 3) * S;
+      const lyBot = (y + lidH + ep.tiltTop) * S;
+      const ryBot = (y + lidH - ep.tiltTop) * S;
+      C.moveTo(lx, lyTop); C.lineTo(rx, lyTop);
+      C.lineTo(rx, ryBot); C.lineTo(lx, lyBot);
+      C.closePath(); C.fill();
     }
-    ctx.globalAlpha = 1;
+  }
+
+  // Angled bottom lid
+  if (ep.lidBot > 0.02 || Math.abs(ep.tiltBot) > 0.5) {
+    const lidH = eh * Math.max(ep.lidBot, 0) + Math.abs(ep.tiltBot);
+    if (lidH > 0.5) {
+      C.fillStyle = BG_COLOR;
+      C.beginPath();
+      const lx = (x - 2) * S, rx = (x + ew + 2) * S;
+      const lyBot = (y + eh + 3) * S;
+      const lyTop = (y + eh - lidH + ep.tiltBot) * S;
+      const ryTop = (y + eh - lidH - ep.tiltBot) * S;
+      C.moveTo(lx, lyTop); C.lineTo(rx, ryTop);
+      C.lineTo(rx, lyBot); C.lineTo(lx, lyBot);
+      C.closePath(); C.fill();
+    }
+  }
+}
+
+// ============================================================
+// STATUS TICKER (typing/hold/erase state machine)
+// ============================================================
+const statusState = {
+  currentText: '',   // what we're currently displaying/targeting
+  displayText: '',   // what's visible right now
+  charIdx: 0,
+  phase: 'idle',     // 'idle' | 'typing' | 'hold' | 'erasing' | 'erase_then_type'
+  timer: 0,
+  typeSpeed: 0.04,
+  holdTime: 5.0,
+  eraseSpeed: 0.02,
+  pendingText: null,  // queued text to type after erase
+  serverText: '',     // last text received from server
+};
+
+function setStatusText(text) {
+  const ss = statusState;
+  if (text === ss.serverText) return;
+  ss.serverText = text;
+
+  if (!text) {
+    // Empty: erase current and go idle
+    if (ss.displayText) {
+      ss.phase = 'erasing';
+      ss.pendingText = null;
+      ss.timer = 0;
+    } else {
+      ss.phase = 'idle';
+    }
     return;
   }
 
-  // Batch all full-opacity dots into a single path (vast majority of frames)
-  ctx.fillStyle = DOT_COLOR;
-  ctx.beginPath();
-  for (const d of dots) {
-    const a = d[2] ?? 1;
-    if (a < 0.04 || a <= 0.96) continue;
-    ctx.moveTo(d[0] + DOT_R, d[1]);
-    ctx.arc(d[0], d[1], DOT_R, 0, Math.PI * 2);
+  if (ss.phase === 'idle' && !ss.displayText) {
+    // Nothing showing — type it directly
+    ss.currentText = text;
+    ss.charIdx = 0;
+    ss.displayText = '';
+    ss.phase = 'typing';
+    ss.timer = 0;
+  } else {
+    // Something showing — erase first, then type new
+    ss.pendingText = text;
+    if (ss.phase !== 'erasing' && ss.phase !== 'erase_then_type') {
+      ss.phase = 'erase_then_type';
+      ss.timer = 0;
+    }
   }
-  ctx.fill();
+}
 
-  // Partially transparent dots during morphing (individual alpha)
-  for (const d of dots) {
-    const a = d[2] ?? 1;
-    if (a < 0.04 || a > 0.96) continue;
-    ctx.globalAlpha = a;
-    ctx.beginPath();
-    ctx.arc(d[0], d[1], DOT_R, 0, Math.PI * 2);
-    ctx.fill();
+function updateStatus(dt) {
+  const ss = statusState;
+  if (ss.phase === 'idle') return;
+  ss.timer += dt;
+
+  if (ss.phase === 'typing') {
+    if (ss.timer >= ss.typeSpeed) {
+      ss.timer = 0;
+      ss.charIdx++;
+      ss.displayText = ss.currentText.substring(0, ss.charIdx);
+      if (ss.charIdx >= ss.currentText.length) {
+        ss.phase = 'hold';
+        ss.timer = 0;
+      }
+    }
+  } else if (ss.phase === 'hold') {
+    if (ss.pendingText != null) {
+      // New text waiting — start erasing
+      ss.phase = 'erase_then_type';
+      ss.timer = 0;
+    } else if (ss.timer >= ss.holdTime) {
+      ss.phase = 'erasing';
+      ss.timer = 0;
+    }
+  } else if (ss.phase === 'erasing' || ss.phase === 'erase_then_type') {
+    if (ss.timer >= ss.eraseSpeed) {
+      ss.timer = 0;
+      ss.charIdx--;
+      ss.displayText = ss.currentText.substring(0, Math.max(0, ss.charIdx));
+      if (ss.charIdx <= 0) {
+        if (ss.phase === 'erase_then_type' && ss.pendingText) {
+          ss.currentText = ss.pendingText;
+          ss.pendingText = null;
+          ss.charIdx = 0;
+          ss.displayText = '';
+          ss.phase = 'typing';
+          ss.timer = 0;
+        } else {
+          ss.displayText = '';
+          ss.phase = 'idle';
+          ss.pendingText = null;
+        }
+      }
+    }
   }
-  ctx.globalAlpha = 1;
+}
+
+function renderStatus() {
+  const ss = statusState;
+  if (!ss.displayText && ss.phase === 'idle') return;
+
+  const fontSize = 7;
+  C.font = `${fontSize * S}px "Share Tech Mono", monospace`;
+  C.textBaseline = 'top';
+  C.textAlign = 'center';
+  C.fillStyle = '#006a8a';
+  const text = ss.displayText || '';
+  const textY = 54;
+  C.fillText(text, (VW / 2) * S, textY * S);
+
+  // Blinking cursor
+  if (ss.phase === 'typing' || (ss.phase === 'hold' && Math.floor(Date.now() / 500) % 2 === 0)) {
+    const textW = C.measureText(text).width;
+    const cursorX = (VW / 2) * S + textW / 2;
+    C.fillStyle = EYE_COLOR;
+    C.fillRect(cursorX + 1, textY * S, 2 * S, fontSize * S);
+  }
+  C.textAlign = 'left';
 }
 
 // ============================================================
-// STATUS DISPLAY
+// ACTIONS
 // ============================================================
-const statusEl = document.getElementById('status');
-let statusCheckInterval = 1000;
+function doBlink() {
+  eye.blinkLDir = 1; eye.blinkL = 0;
+  eye.blinkRDir = 1; eye.blinkR = 0;
+}
+function doWinkL() { eye.blinkLDir = 1; eye.blinkL = 0; }
+function doWinkR() { eye.blinkRDir = 1; eye.blinkR = 0; }
 
+// ============================================================
+// SEQUENCES (boot, error_pulse)
+// ============================================================
+function startSequence(name) {
+  const n = typeof name === 'string' ? name : '';
+  const now = performance.now();
+  if (n === 'boot') {
+    activeSequence = { name: 'boot', untilMs: now + 1600, stage: 0, startMs: now };
+    setExpression('glee');
+    doBlink();
+    return;
+  }
+  if (n === 'error_pulse') {
+    activeSequence = { name: 'error_pulse', untilMs: now + 900, stage: 0, startMs: now };
+    setExpression('scared');
+    return;
+  }
+}
+
+// ============================================================
+// RENDER
+// ============================================================
+function render() {
+  C.fillStyle = BG_COLOR;
+  C.fillRect(0, 0, canvas.width, canvas.height);
+
+  const e = eye;
+  const leftCX = VW / 2 - e.gap / 2 + e.confL;
+  const rightCX = VW / 2 + e.gap / 2 + e.confR;
+  const cy = VH / 2 - 5;
+
+  const sleepBlink = e.sleepT * 0.92;
+  const blinkL = Math.max(e.blinkL, sleepBlink);
+  const blinkR = Math.max(e.blinkR, sleepBlink);
+
+  drawEye(leftCX, cy, e.baseW, e.baseH, e.cornerR, e.L, blinkL, e.pupilScale, e.gazeX, e.gazeY);
+  drawEye(rightCX, cy, e.baseW, e.baseH, e.cornerR, e.R, blinkR, e.pupilScale, e.gazeX, e.gazeY);
+
+  renderStatus();
+}
+
+// ============================================================
+// UPDATE LOOP
+// ============================================================
+let lastT = 0;
+let accumulator = 0;
+
+function frame(ts) {
+  const elapsed = ts - lastT;
+  lastT = ts;
+  accumulator += elapsed;
+
+  if (accumulator < FRAME_TIME) {
+    requestAnimationFrame(frame);
+    return;
+  }
+  const dtMs = Math.min(accumulator, 50);
+  const dt = dtMs / 1000;
+  accumulator = 0;
+
+  const e = eye;
+  const spd = e.tSpeed;
+  const preset = PRESETS[e.mood];
+
+  // Interpolate per-eye params toward preset
+  const fields = ['w', 'h', 'offY', 'tiltTop', 'tiltBot', 'lidTop', 'lidBot', 'scaleX'];
+  for (const f of fields) {
+    e.L[f] = smoothStep(e.L[f], preset.L[f], spd * 0.08, dt);
+    e.R[f] = smoothStep(e.R[f], preset.R[f], spd * 0.08, dt);
+  }
+
+  // Interpolate pupil scale
+  const targetPS = preset.pupilScale || 1;
+  e.pupilScale = smoothStep(e.pupilScale, targetPS, spd * 0.08, dt);
+
+  // Gaze smoothing
+  let gazeTargX = e.gazeTargX, gazeTargY = e.gazeTargY;
+  if (lookOverride) {
+    gazeTargX = lookOverride.x;
+    gazeTargY = lookOverride.y;
+  } else if (e.idleMove && e.gazeTargX === 0 && e.gazeTargY === 0 && !e.sleeping) {
+    gazeTargX = e.idleDriftX;
+    gazeTargY = e.idleDriftY;
+  }
+  const gazeSpd = (lookOverride || e.gazeTargX !== 0 || e.gazeTargY !== 0) ? 8 * 0.08 : 2 * 0.08;
+  e.gazeX = smoothStep(e.gazeX, gazeTargX, gazeSpd, dt);
+  e.gazeY = smoothStep(e.gazeY, gazeTargY, gazeSpd, dt);
+
+  // Blink animation
+  if (e.blinkLDir) {
+    e.blinkL += e.blinkLDir * 0.18 * dt * 60;
+    if (e.blinkL >= 1) { e.blinkL = 1; e.blinkLDir = -1; }
+    if (e.blinkL <= 0) { e.blinkL = 0; e.blinkLDir = 0; }
+  }
+  if (e.blinkRDir) {
+    e.blinkR += e.blinkRDir * 0.18 * dt * 60;
+    if (e.blinkR >= 1) { e.blinkR = 1; e.blinkRDir = -1; }
+    if (e.blinkR <= 0) { e.blinkR = 0; e.blinkRDir = 0; }
+  }
+
+  // Sleep
+  if (e.sleeping) e.sleepT = Math.min(1, e.sleepT + dt * 1.5);
+  else e.sleepT = Math.max(0, e.sleepT - dt * 3);
+
+  // Confusion decay
+  if (e.confTimer > 0) {
+    e.confTimer -= dt;
+    if (e.confTimer <= 0) { e.confL = 0; e.confR = 0; }
+  } else {
+    e.confL = smoothStep(e.confL, 0, 4 * 0.08, dt);
+    e.confR = smoothStep(e.confR, 0, 4 * 0.08, dt);
+  }
+
+  // Auto-blink
+  if (e.autoBlink && !e.sleeping && e.blinkLDir === 0 && e.mood !== 'happy') {
+    e.blinkTimer -= dt;
+    if (e.blinkTimer <= 0) {
+      doBlink();
+      e.blinkTimer = blinkMinS + Math.random() * (blinkMaxS - blinkMinS);
+    }
+  }
+
+  // Happy expression: alternating winks
+  if (e.mood === 'happy' && !e.sleeping && e.blinkLDir === 0 && e.blinkRDir === 0) {
+    e.happyWinkTimer -= dt;
+    if (e.happyWinkTimer <= 0) {
+      if (e.happyWinkSide === 0) doWinkL();
+      else doWinkR();
+      e.happyWinkSide = 1 - e.happyWinkSide;
+      e.happyWinkTimer = 0.8 + Math.random() * 1.2;
+    }
+  }
+
+  // Idle saccades
+  if (e.idleMove && !lookOverride && e.gazeTargX === 0 && e.gazeTargY === 0 && !e.sleeping) {
+    e.saccadeTimer -= dt;
+    if (e.saccadeTimer <= 0) {
+      e.idleDriftX = (Math.random() - 0.5) * 0.7;
+      e.idleDriftY = (Math.random() - 0.5) * 0.5;
+      e.saccadeTimer = 3.0 + Math.random() * 3.0;
+    }
+  }
+
+  // Auto-cycle expressions
+  if (autoCycleEnabled && !e.sleeping) {
+    autoCycleTimer += dtMs;
+    if (autoCycleTimer >= autoCycleInterval) {
+      const pick = weightedRandomExpression();
+      setMood(pick);
+      autoCycleTimer = 0;
+      autoCycleInterval = exprMinMs + Math.random() * (exprMaxMs - exprMinMs);
+    }
+  }
+
+  // Sequences
+  if (activeSequence) {
+    const now = performance.now();
+    if (now >= activeSequence.untilMs) {
+      activeSequence = null;
+    } else if (activeSequence.name === 'boot') {
+      const elapsed = now - activeSequence.startMs;
+      if (elapsed > 650 && activeSequence.stage < 1) {
+        activeSequence.stage = 1;
+        setMood('happy');
+      } else if (elapsed > 1100 && activeSequence.stage < 2) {
+        activeSequence.stage = 2;
+        setMood('normal');
+      }
+    }
+  }
+
+  updateStatus(dt);
+  render();
+  requestAnimationFrame(frame);
+}
+
+// ============================================================
+// SERVER API: STATUS (poll every 1s)
+// ============================================================
 function fetchStatus() {
   fetch('/api/status')
     .then(r => r.ok ? r.json() : Promise.reject())
     .then(data => {
-      if (data.text) {
-        // Display server-provided text verbatim so "Ready" doesn't become
-        // "Working on: Ready". The OpenClaw hook can include a prefix when desired.
-        statusEl.textContent = data.text;
-        statusEl.classList.add('visible');
-      } else {
-        statusEl.classList.remove('visible');
-      }
+      setStatusText(data.text || '');
     })
-    .catch(() => {
-      // Silently ignore - works standalone without server
-      statusEl.classList.remove('visible');
-    });
+    .catch(() => {});
 }
-setInterval(fetchStatus, statusCheckInterval);
+setInterval(fetchStatus, 1000);
 fetchStatus();
 
 // ============================================================
-// CONFIG FETCH (optional, override defaults from server)
+// SERVER API: CONFIG (fetch once on startup)
 // ============================================================
-function rgb(arr, fallback) {
-  if (!Array.isArray(arr) || arr.length < 3) return fallback;
-  const r = Math.max(0, Math.min(255, arr[0] | 0));
-  const g = Math.max(0, Math.min(255, arr[1] | 0));
-  const b = Math.max(0, Math.min(255, arr[2] | 0));
-  return `rgb(${r}, ${g}, ${b})`;
+function rgb(arr) {
+  if (!Array.isArray(arr) || arr.length < 3) return null;
+  const r = clamp(arr[0] | 0, 0, 255);
+  const g = clamp(arr[1] | 0, 0, 255);
+  const b = clamp(arr[2] | 0, 0, 255);
+  return `rgb(${r},${g},${b})`;
 }
 
 fetch('/api/config')
   .then(r => r.ok ? r.json() : Promise.reject())
   .then(cfg => {
     if (cfg.colors) {
-      if (cfg.colors.background) BG_COLOR = rgb(cfg.colors.background, BG_COLOR);
-      if (cfg.colors.eye_white) DOT_COLOR = rgb(cfg.colors.eye_white, DOT_COLOR);
+      if (cfg.colors.background) {
+        const c = rgb(cfg.colors.background);
+        if (c) BG_COLOR = c;
+      }
+      if (cfg.colors.eye_color) {
+        const c = rgb(cfg.colors.eye_color);
+        if (c) EYE_COLOR = c;
+      }
+      // Backward compat: old configs may still have eye_white
+      if (!cfg.colors.eye_color && cfg.colors.eye_white) {
+        const c = rgb(cfg.colors.eye_white);
+        if (c) EYE_COLOR = c;
+      }
     }
     if (cfg.behavior) {
       if (cfg.behavior.blink_interval_min != null || cfg.behavior.blink_interval_max != null) {
-        blinkMinMs = (cfg.behavior.blink_interval_min || 3) * 1000;
-        blinkMaxMs = (cfg.behavior.blink_interval_max || 5.5) * 1000;
-        blinkInterval = rnd(blinkMinMs, blinkMaxMs);
+        blinkMinS = cfg.behavior.blink_interval_min || 1.5;
+        blinkMaxS = cfg.behavior.blink_interval_max || 4.0;
       }
       if (cfg.behavior.expression_interval_min != null || cfg.behavior.expression_interval_max != null) {
         exprMinMs = (cfg.behavior.expression_interval_min || 8) * 1000;
         exprMaxMs = (cfg.behavior.expression_interval_max || 20) * 1000;
-        autoCycleInterval = rnd(exprMinMs, exprMaxMs);
+        autoCycleInterval = exprMinMs + Math.random() * (exprMaxMs - exprMinMs);
       }
       if (cfg.behavior.look_interval_min != null || cfg.behavior.look_interval_max != null) {
-        lookMinMs = (cfg.behavior.look_interval_min || 2) * 1000;
-        lookMaxMs = (cfg.behavior.look_interval_max || 5) * 1000;
-        lookInterval = rnd(lookMinMs, lookMaxMs);
+        lookMinS = cfg.behavior.look_interval_min || 1.0;
+        lookMaxS = cfg.behavior.look_interval_max || 3.0;
       }
     }
     if (cfg.display && cfg.display.fps != null) {
-      const fps = Math.max(1, Math.min(240, cfg.display.fps | 0));
-      TARGET_FPS = fps;
+      TARGET_FPS = clamp(cfg.display.fps | 0, 1, 240);
       FRAME_TIME = 1000 / TARGET_FPS;
     }
-    if (cfg.display) {
-      if (cfg.display.dot_spacing != null) {
-        const ds = Number(cfg.display.dot_spacing);
-        if (Number.isFinite(ds) && ds >= 2) DOT_SPACING = ds;
-      }
-      if (cfg.display.dot_radius != null) {
-        const dr = Number(cfg.display.dot_radius);
-        if (Number.isFinite(dr) && dr >= 0.5) DOT_R = dr;
-      }
-    }
   })
-  .catch(() => {
-    // Standalone mode - use defaults
-  });
+  .catch(() => {});
 
 // ============================================================
-// COMMAND FETCH (optional: external control via command.json)
+// SERVER API: COMMAND (poll every 1s)
 // ============================================================
-const KNOWN_EXPRS = new Set([
-  'neutral', 'happy', 'sad', 'angry', 'surprised', 'sleepy', 'wink', 'love', 'talking',
-  'focused', 'thinking', 'typing', 'excited', 'smug', 'confused', 'glitch', 'sleep'
-]);
-
-function startSequence(name) {
-  const n = typeof name === 'string' ? name : '';
-  const now = performance.now();
-  if (n === 'boot') {
-    activeSequence = { name: 'boot', untilMs: now + 1600, stage: 0, startMs: now };
-    // Kick it off immediately.
-    setExpression('excited');
-    blinkQueue = Math.max(blinkQueue, 2);
-    return;
-  }
-  if (n === 'error_pulse') {
-    activeSequence = { name: 'error_pulse', untilMs: now + 900, stage: 0, startMs: now };
-    glitchPulseUntilMs = Math.max(glitchPulseUntilMs, now + 650);
-    setExpression('glitch');
-    return;
-  }
-}
-
 function fetchCommand() {
   fetch('/api/command')
     .then(r => r.ok ? r.json() : Promise.reject())
     .then(cmd => {
-      if (cmd && typeof cmd === 'object') {
-        if (typeof cmd.expression === 'string' && KNOWN_EXPRS.has(cmd.expression)) {
-          setExpression(cmd.expression);
-        }
-        if (typeof cmd.auto_cycle === 'boolean') {
-          autoCycleEnabled = cmd.auto_cycle;
-          autoCycleTimer = 0;
-        }
+      if (!cmd || typeof cmd !== 'object') return;
 
-        if (typeof cmd.intensity === 'number' && Number.isFinite(cmd.intensity)) {
-          cmdIntensity = clamp(cmd.intensity, 0, 1);
-        } else if ('intensity' in cmd) {
-          // Explicitly present but invalid -> ignore, keep previous.
-        } else {
-          cmdIntensity = null;
-        }
+      if (typeof cmd.expression === 'string' && KNOWN_EXPRS.has(cmd.expression)) {
+        setExpression(cmd.expression);
+      }
+      if (typeof cmd.auto_cycle === 'boolean') {
+        autoCycleEnabled = cmd.auto_cycle;
+        autoCycleTimer = 0;
+      }
 
-        if ('look' in cmd) {
-          if (cmd.look && typeof cmd.look === 'object') {
-            const x = cmd.look.x, y = cmd.look.y;
-            if (typeof x === 'number' && typeof y === 'number' && Number.isFinite(x) && Number.isFinite(y)) {
-              lookOverride = { x: clamp(x, -1, 1), y: clamp(y, -1, 1) };
-            } else {
-              lookOverride = null;
-            }
+      if (typeof cmd.intensity === 'number' && Number.isFinite(cmd.intensity)) {
+        cmdIntensity = clamp(cmd.intensity, 0, 1);
+      } else if (!('intensity' in cmd)) {
+        cmdIntensity = null;
+      }
+
+      if ('look' in cmd) {
+        if (cmd.look && typeof cmd.look === 'object') {
+          const x = cmd.look.x, y = cmd.look.y;
+          if (typeof x === 'number' && typeof y === 'number' && Number.isFinite(x) && Number.isFinite(y)) {
+            lookOverride = { x: clamp(x, -1, 1), y: clamp(y, -1, 1) };
           } else {
             lookOverride = null;
           }
         } else {
           lookOverride = null;
         }
+      } else {
+        lookOverride = null;
+      }
 
-        if (typeof cmd.blink_seq === 'number' && Number.isFinite(cmd.blink_seq)) {
-          const v = cmd.blink_seq | 0;
-          if (lastBlinkSeq === null) lastBlinkSeq = v;
-          else if (v !== lastBlinkSeq) {
-            lastBlinkSeq = v;
-            blinkQueue = Math.max(blinkQueue, 1);
-          }
+      if (typeof cmd.blink_seq === 'number' && Number.isFinite(cmd.blink_seq)) {
+        const v = cmd.blink_seq | 0;
+        if (lastBlinkSeq === null) lastBlinkSeq = v;
+        else if (v !== lastBlinkSeq) {
+          lastBlinkSeq = v;
+          doBlink();
         }
+      }
 
-        if (typeof cmd.sequence_seq === 'number' && Number.isFinite(cmd.sequence_seq)) {
-          const v = cmd.sequence_seq | 0;
-          if (lastSequenceSeq === null) lastSequenceSeq = v;
-          else if (v !== lastSequenceSeq) {
-            lastSequenceSeq = v;
-            if (typeof cmd.sequence === 'string') startSequence(cmd.sequence);
-          }
+      if (typeof cmd.sequence_seq === 'number' && Number.isFinite(cmd.sequence_seq)) {
+        const v = cmd.sequence_seq | 0;
+        if (lastSequenceSeq === null) lastSequenceSeq = v;
+        else if (v !== lastSequenceSeq) {
+          lastSequenceSeq = v;
+          if (typeof cmd.sequence === 'string') startSequence(cmd.sequence);
         }
       }
     })
-    .catch(() => {
-      // Standalone mode - ignore
-    });
+    .catch(() => {});
 }
 setInterval(fetchCommand, 1000);
 
 // ============================================================
-// MAIN LOOP (throttled to 30fps)
+// KEYBOARD CONTROLS
 // ============================================================
-let TARGET_FPS = 30;
-let FRAME_TIME = 1000 / TARGET_FPS;
-let lastT = performance.now();
-let accumulator = 0;
-
-function frame() {
-  const now = performance.now();
-  const elapsed = now - lastT;
-  lastT = now;
-  accumulator += elapsed;
-
-  // Throttle: skip render if not enough time has passed
-  if (accumulator < FRAME_TIME) {
-    requestAnimationFrame(frame);
-    return;
-  }
-  const dt = Math.min(accumulator, 50);
-  accumulator = 0;
-
-  // --- External intensity (smoothed) ---
-  const targetI = (cmdIntensity == null) ? 1.0 : clamp(cmdIntensity, 0, 1);
-  animIntensity = expToward(animIntensity, targetI, dt, 220);
-  const I = animIntensity;
-
-  // --- Blink ---
-  blinkTimer += dt;
-  if (blinkPhase === 0 && blinkQueue === 0 && blinkTimer >= blinkInterval) {
-    // Randomly choose single or double blink.
-    blinkQueue = (Math.random() < 0.10) ? 2 : 1;
-  }
-  if (blinkPhase === 0 && blinkQueue > 0) {
-    blinkQueue = Math.max(0, blinkQueue - 1);
-    blinkPhase = 1;
-    blinkTimer = 0;
-    // Slightly vary blink speeds per blink.
-    blinkCloseRate = rnd(0.0085, 0.0115) * (0.7 + 0.3 * I);
-    blinkOpenRate = rnd(0.0065, 0.0090) * (0.7 + 0.3 * I);
-  }
-  if (blinkPhase === 1) {
-    blinkAmt += dt * blinkCloseRate;
-    if (blinkAmt >= 1) { blinkAmt = 1; blinkPhase = 2; }
-  } else if (blinkPhase === 2) {
-    blinkAmt -= dt * blinkOpenRate;
-    if (blinkAmt <= 0) {
-      blinkAmt = 0;
-      if (blinkQueue > 0) {
-        blinkPhase = 3;
-        blinkInterTimer = 0;
-      } else {
-        blinkPhase = 0;
-        blinkInterval = rnd(blinkMinMs, blinkMaxMs);
-        blinkTimer = 0;
-      }
-    }
-  } else if (blinkPhase === 3) {
-    blinkInterTimer += dt;
-    if (blinkInterTimer >= blinkInterDelayMs) {
-      blinkPhase = 0;
-    }
-  }
-
-  // --- Look direction ---
-  if (lookOverride) {
-    targetLookX = lookOverride.x;
-    targetLookY = lookOverride.y;
-    lookJumpMs = 0;
-  } else {
-    lookTimer += dt;
-    if (lookTimer >= lookInterval) {
-      targetLookX = rnd(-1, 1);
-      targetLookY = rnd(-0.55, 0.55);
-      lookInterval = rnd(lookMinMs, lookMaxMs);
-      lookTimer = 0;
-      lookJumpMs = 0;
-      lookJumpDurMs = rnd(90, 140);
-    }
-    lookJumpMs += dt;
-  }
-  const jumpHL = lerp(55, 22, I);
-  const settleHL = lerp(240, 120, I);
-  const hl = (lookOverride || lookJumpMs < lookJumpDurMs) ? jumpHL : settleHL;
-  lookX = expToward(lookX, targetLookX, dt, hl);
-  lookY = expToward(lookY, targetLookY, dt, hl);
-
-  // Subtle asymmetry drift.
-  eyeNoiseTimer += dt;
-  if (eyeNoiseTimer >= eyeNoiseInterval) {
-    eyeNoiseTLX = rnd(-0.22, 0.22);
-    eyeNoiseTLY = rnd(-0.18, 0.18);
-    eyeNoiseTRX = rnd(-0.22, 0.22);
-    eyeNoiseTRY = rnd(-0.18, 0.18);
-    eyeNoiseInterval = rnd(3000, 7000);
-    eyeNoiseTimer = 0;
-  }
-  const noiseHL = 480;
-  eyeNoiseLX = expToward(eyeNoiseLX, eyeNoiseTLX, dt, noiseHL);
-  eyeNoiseLY = expToward(eyeNoiseLY, eyeNoiseTLY, dt, noiseHL);
-  eyeNoiseRX = expToward(eyeNoiseRX, eyeNoiseTRX, dt, noiseHL);
-  eyeNoiseRY = expToward(eyeNoiseRY, eyeNoiseTRY, dt, noiseHL);
-
-  // --- Breathing & talk ---
-  breathPhase += dt * (0.00135 + 0.00115 * I);
-  if (targetExpr === 'talking' || targetExpr === 'typing') talkPhase += dt * (0.010 + 0.012 * I);
-
-  // --- Sequences ---
-  if (activeSequence) {
-    if (now >= activeSequence.untilMs) {
-      activeSequence = null;
-    } else if (activeSequence.name === 'boot') {
-      const e = now - activeSequence.startMs;
-      if (e > 650 && activeSequence.stage < 1) {
-        activeSequence.stage = 1;
-        setExpression('happy');
-      } else if (e > 1100 && activeSequence.stage < 2) {
-        activeSequence.stage = 2;
-        setExpression('neutral');
-      }
-    }
-  }
-
-  // --- Expression morph ---
-  if (morphT < 1) {
-    morphT += dt * 0.001 * MORPH_SPEED;
-    if (morphT > 1) morphT = 1;
-  }
-
-  // --- Auto-cycle expressions ---
-  if (autoCycleEnabled) {
-    autoCycleTimer += dt;
-    if (autoCycleTimer >= autoCycleInterval) {
-      const chosen = weightedRandomExpression();
-      setExpression(chosen);
-      autoCycleTimer = 0;
-      autoCycleInterval = rnd(exprMinMs, exprMaxMs);
-    }
-  }
-
-  // --- Draw ---
-  ctx.clearRect(0, 0, W, H);
-  ctx.fillStyle = BG_COLOR;
-  ctx.fillRect(0, 0, W, H);
-  // Build geometry at base scale, apply breathing via canvas transform
-  const baseS = Math.min(W, H) / 260;
-  const breathScale = 1 + Math.sin(breathPhase) * (0.006 + 0.010 * I);
-  const from = buildExpr(currentExpr, baseS, lookX, lookY, blinkAmt, talkPhase, I);
-  const to = buildExpr(targetExpr, baseS, lookX, lookY, blinkAmt, talkPhase, I);
-  const t = ease(morphT);
-
-  const all = [
-    ...morphDots(from.le, to.le, t),
-    ...morphDots(from.re, to.re, t),
-    ...morphDots(from.mo, to.mo, t),
-    ...morphDots(from.ex || [], to.ex || [], t),
-  ];
-
-  const glitchActive = (currentExpr === 'glitch' || targetExpr === 'glitch') || (now < glitchPulseUntilMs);
-  const jitter = glitchActive ? (DOT_SPACING * (0.10 + 0.28 * I)) : 0;
-
-  ctx.save();
-  ctx.translate(cx, cy);
-  ctx.scale(breathScale, breathScale);
-  ctx.translate(-cx, -cy);
-  drawDots(all, jitter);
-  ctx.restore();
-
-  // Cached overlay (scanlines + vignette)
-  ctx.drawImage(overlayCanvas, 0, 0);
-
-
-  requestAnimationFrame(frame);
-}
-
-// ============================================================
-// INPUT HANDLING
-// ============================================================
-function setExpression(name) {
-  if (name === targetExpr && morphT >= 1) return;
-  currentExpr = targetExpr;
-  targetExpr = name;
-  morphT = 0;
-}
-
-function manualBlink() {
-  // Trigger a blink ASAP; if already blinking, queue another.
-  if (blinkPhase === 0 && blinkQueue === 0) {
-    blinkQueue = 1;
-    return;
-  }
-  blinkQueue = Math.min(3, blinkQueue + 1);
-}
+const MOOD_KEYS = ['1','2','3','4','5','6','7','8','9','0','-','=','q','w','e'];
+const MOOD_NAMES = Object.keys(PRESETS);
 
 function toggleFullscreen() {
-  // Browser fullscreen first; if unsupported (or running in pywebview), ask the server.
   const el = document.documentElement;
   const can = !!(el.requestFullscreen && document.exitFullscreen);
   if (can) {
@@ -935,53 +840,56 @@ function toggleFullscreen() {
   fetch('/api/fullscreen/toggle').catch(() => {});
 }
 
-document.addEventListener('keydown', e => {
-  const k = e.key;
-  if (k === 'Escape' || k === 'q' || k === 'Q') {
+document.addEventListener('keydown', ev => {
+  const k = ev.key;
+
+  // Quit
+  if (k === 'Escape' || k === 'Q') {
     fetch('/api/quit').catch(() => {});
     return;
   }
+
+  // Toggle auto-cycle
   if (k === ' ') {
     autoCycleEnabled = !autoCycleEnabled;
     autoCycleTimer = 0;
+    ev.preventDefault();
     return;
   }
+
+  // Manual blink
   if (k === 'b' || k === 'B') {
-    manualBlink();
+    doBlink();
+    ev.preventDefault();
     return;
   }
+
+  // Fullscreen
   if (k === 'f' || k === 'F') {
     toggleFullscreen();
     return;
   }
 
-  // Extra expression hotkeys (letters)
-  const kk = (typeof k === 'string') ? k.toLowerCase() : '';
-  if (kk === 't') { setExpression('thinking'); return; }
-  if (kk === 'y') { setExpression('typing'); return; }
-  if (kk === 'o') { setExpression('focused'); return; }
-  if (kk === 'e') { setExpression('excited'); return; }
-  if (kk === 's') { setExpression('smug'); return; }
-  if (kk === 'c') { setExpression('confused'); return; }
-  if (kk === 'g') { setExpression('glitch'); return; }
-  if (kk === 'z') { setExpression('sleep'); return; }
+  // Arrow keys: gaze override
+  if (k === 'ArrowUp')    { eye.gazeTargX = 0; eye.gazeTargY = -1; ev.preventDefault(); return; }
+  if (k === 'ArrowDown')  { eye.gazeTargX = 0; eye.gazeTargY = 1;  ev.preventDefault(); return; }
+  if (k === 'ArrowLeft')  { eye.gazeTargX = -1; eye.gazeTargY = 0; ev.preventDefault(); return; }
+  if (k === 'ArrowRight') { eye.gazeTargX = 1;  eye.gazeTargY = 0; ev.preventDefault(); return; }
 
-  // Expression hotkeys: 1-9
-  const exprs = [
-    'neutral',
-    'happy',
-    'sad',
-    'angry',
-    'surprised',
-    'sleepy',
-    'wink',
-    'love',
-    'talking',
-  ];
-  const n = (k && k.length === 1) ? (k.charCodeAt(0) - 48) : -1;
-  if (n >= 1 && n <= exprs.length) {
-    setExpression(exprs[n - 1]);
+  // Expression hotkeys: 1-9, 0, -, =, q, w, e
+  const kk = (typeof k === 'string') ? k.toLowerCase() : '';
+  const mi = MOOD_KEYS.indexOf(kk);
+  if (mi >= 0 && mi < MOOD_NAMES.length) {
+    eye.sleeping = false;
+    setMood(MOOD_NAMES[mi]);
+    return;
   }
+});
+
+document.addEventListener('keyup', ev => {
+  const k = ev.key;
+  if (k === 'ArrowUp' || k === 'ArrowDown') { eye.gazeTargY = 0; }
+  if (k === 'ArrowLeft' || k === 'ArrowRight') { eye.gazeTargX = 0; }
 });
 
 // ============================================================
