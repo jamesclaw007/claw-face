@@ -393,6 +393,8 @@ const statusState = {
   eraseSpeed: 0.02,
   pendingText: null,  // queued text to type after erase
   serverText: '',     // last text received from server
+  cursorBlinkTimer: 0,  // slow blink timer for block cursor
+  cursorVisible: true,  // cursor blink state
 };
 
 function setStatusText(text) {
@@ -472,6 +474,13 @@ function updateStatus(dt) {
       }
     }
   }
+
+  // Slow cursor blink (1.2s interval, not distracting)
+  ss.cursorBlinkTimer += dt;
+  if (ss.cursorBlinkTimer >= 1.2) {
+    ss.cursorBlinkTimer = 0;
+    ss.cursorVisible = !ss.cursorVisible;
+  }
 }
 
 // 3x5 bitmap font for status ticker (each glyph: 5 rows of 3-bit masks)
@@ -521,11 +530,13 @@ function renderBitmapStatus() {
     }
   }
 
-  // Cursor — 1px column after text
+  // Cursor — 3x5 block after text with slow blink
   if (ss.phase === 'typing' || ss.phase === 'hold') {
-    const cursorX = startX + text.length * charW + 1;
-    for (let row = 0; row < 5; row++) {
-      OC.fillRect(cursorX, startY + row, 1, 1);
+    if (ss.cursorVisible) {
+      const cursorX = startX + text.length * charW + 1;
+      for (let row = 0; row < 5; row++) {
+        OC.fillRect(cursorX, startY + row, 3, 1);  // 3px wide block
+      }
     }
   }
 }
