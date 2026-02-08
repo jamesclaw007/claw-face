@@ -167,6 +167,11 @@ const PRESETS = {
     R: { w:2, h:4, offY:-1, tiltTop:2, tiltBot:0, lidTop:0, lidBot:0, scaleX:1 },
     transitionSpeed: 5,
   },
+  thinking: {
+    L: { w:0, h:2, offY:-3, tiltTop:0, tiltBot:0, lidTop:0.12, lidBot:0, scaleX:1 },
+    R: { w:0, h:2, offY:-3, tiltTop:0, tiltBot:0, lidTop:0.12, lidBot:0, scaleX:1 },
+    transitionSpeed: 5,
+  },
 };
 
 // Compatibility map: old expression names -> new canonical names
@@ -174,7 +179,6 @@ const COMPAT_MAP = {
   neutral: 'normal',
   love: 'cute',
   focused: 'suspicious',
-  thinking: 'skeptic',
   excited: 'glee',
   glitch: 'scared',
   smug: 'skeptic',
@@ -216,6 +220,7 @@ const EXPRESSION_WEIGHTS = {
   sleepy:     12,
   glee:        4,
   skeptic:     6,
+  thinking:    8,
 };
 
 function weightedRandomExpression() {

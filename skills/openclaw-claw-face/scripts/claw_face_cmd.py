@@ -18,15 +18,34 @@ COMMAND_FILE = CONFIG_DIR / "command.json"
 STATUS_FILE = CONFIG_DIR / "status.txt"
 
 VALID_EXPRESSIONS = {
-    "neutral",
+    # Canonical (OLED eye presets)
+    "normal",
     "happy",
     "sad",
     "angry",
     "surprised",
+    "suspicious",
+    "cute",
+    "tired",
+    "wonder",
+    "upset",
+    "confused",
+    "scared",
     "sleepy",
-    "wink",
+    "glee",
+    "skeptic",
+    # Compat aliases (mapped client-side)
+    "neutral",
     "love",
+    "focused",
+    "thinking",
+    "excited",
+    "glitch",
+    "smug",
+    "sleep",
+    "wink",
     "talking",
+    "typing",
 }
 
 

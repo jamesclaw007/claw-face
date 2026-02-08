@@ -15,11 +15,9 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class Colors:
-    """Color configuration (RGB tuples) - LED dot-matrix style."""
+    """Color configuration (RGB tuples) - OLED eye style."""
     background: Tuple[int, int, int] = (0, 0, 0)
-    eye_white: Tuple[int, int, int] = (230, 235, 240)
-    mouth: Tuple[int, int, int] = (220, 225, 230)
-    highlight: Tuple[int, int, int] = (255, 255, 255)
+    eye_color: Tuple[int, int, int] = (0, 184, 255)
 
     @staticmethod
     def _clamp_rgb(v: object, fallback: Tuple[int, int, int]) -> Tuple[int, int, int]:
@@ -36,9 +34,7 @@ class Colors:
 
     def validate(self) -> None:
         self.background = self._clamp_rgb(self.background, (0, 0, 0))
-        self.eye_white = self._clamp_rgb(self.eye_white, (230, 235, 240))
-        self.mouth = self._clamp_rgb(self.mouth, (220, 225, 230))
-        self.highlight = self._clamp_rgb(self.highlight, (255, 255, 255))
+        self.eye_color = self._clamp_rgb(self.eye_color, (0, 184, 255))
 
 
 @dataclass
@@ -96,9 +92,6 @@ class Display:
     fps: int = 30
     window_width: int = 1280
     window_height: int = 720
-    # Dot-matrix tuning (larger spacing/radius = fewer dots for same face size)
-    dot_spacing: float = 17.0
-    dot_radius: float = 6.5
 
     def validate(self) -> None:
         # Host: leave as-is (string); server binding will handle errors.
@@ -130,23 +123,6 @@ class Display:
             h = 720
         self.window_width = max(1, w)
         self.window_height = max(1, h)
-
-        # Dot-matrix tuning.
-        try:
-            ds = float(self.dot_spacing)
-        except Exception:
-            ds = 17.0
-        if not (ds == ds):
-            ds = 17.0
-        self.dot_spacing = ds if ds >= 2.0 else 17.0
-
-        try:
-            dr = float(self.dot_radius)
-        except Exception:
-            dr = 6.5
-        if not (dr == dr):
-            dr = 6.5
-        self.dot_radius = dr if dr >= 0.5 else 6.5
 
 
 def _safe_init(cls, data: dict):

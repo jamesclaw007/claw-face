@@ -4,23 +4,34 @@ import { promises as fs } from "node:fs";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
 const VALID_EXPRESSIONS = new Set([
-  "neutral",
+  // Canonical (OLED eye presets)
+  "normal",
   "happy",
   "sad",
   "angry",
   "surprised",
+  "suspicious",
+  "cute",
+  "tired",
+  "wonder",
+  "upset",
+  "confused",
+  "scared",
   "sleepy",
-  "wink",
+  "glee",
+  "skeptic",
+  // Compat aliases (mapped client-side)
+  "neutral",
   "love",
-  "talking",
   "focused",
   "thinking",
-  "typing",
   "excited",
-  "smug",
-  "confused",
   "glitch",
+  "smug",
   "sleep",
+  "wink",
+  "talking",
+  "typing",
 ]);
 
 type PresenceConfig = {
@@ -88,9 +99,9 @@ export function registerClawFacePresence(api: OpenClawPluginApi): void {
   const rawCfg = (api.pluginConfig || {}) as Record<string, unknown>;
 
   const cfg: PresenceConfig = {
-    idleExpression: str(rawCfg.idleExpression, "neutral"),
-    busyExpression: str(rawCfg.busyExpression, "talking"),
-    errorExpression: str(rawCfg.errorExpression, "glitch"),
+    idleExpression: str(rawCfg.idleExpression, "normal"),
+    busyExpression: str(rawCfg.busyExpression, "normal"),
+    errorExpression: str(rawCfg.errorExpression, "scared"),
     autoCycleIdle: bool(rawCfg.autoCycleIdle, true),
     autoCycleBusy: bool(rawCfg.autoCycleBusy, false),
     idleDelayMs: Math.max(0, Math.floor(num(rawCfg.idleDelayMs, 1500))),
@@ -100,9 +111,9 @@ export function registerClawFacePresence(api: OpenClawPluginApi): void {
     commandPath: expandHome(str(rawCfg.commandPath, "~/.config/claw-face/command.json")),
   };
 
-  if (!VALID_EXPRESSIONS.has(cfg.idleExpression)) cfg.idleExpression = "neutral";
-  if (!VALID_EXPRESSIONS.has(cfg.busyExpression)) cfg.busyExpression = "talking";
-  if (!VALID_EXPRESSIONS.has(cfg.errorExpression)) cfg.errorExpression = "glitch";
+  if (!VALID_EXPRESSIONS.has(cfg.idleExpression)) cfg.idleExpression = "normal";
+  if (!VALID_EXPRESSIONS.has(cfg.busyExpression)) cfg.busyExpression = "normal";
+  if (!VALID_EXPRESSIONS.has(cfg.errorExpression)) cfg.errorExpression = "scared";
 
   const activeRuns = new Set<string>();
   const toolCounts = new Map<string, number>();
@@ -220,7 +231,7 @@ export function registerClawFacePresence(api: OpenClawPluginApi): void {
     try {
       sequenceSeq += 1;
       await writeCommand({
-        expression: "glitch",
+        expression: "scared",
         auto_cycle: false,
         intensity: 1.0,
         sequence: "error_pulse",
@@ -269,7 +280,7 @@ export function registerClawFacePresence(api: OpenClawPluginApi): void {
     clearIdleTimer();
     clearErrorHold();
     try {
-      await writeCommand({ expression: "thinking", auto_cycle: false, intensity: 0.7 });
+      await writeCommand({ expression: "skeptic", auto_cycle: false, intensity: 0.7 });
       await writeStatus("Thinking...");
     } catch (err) {
       noteIoError(err);
@@ -305,7 +316,7 @@ export function registerClawFacePresence(api: OpenClawPluginApi): void {
     clearIdleTimer();
     clearErrorHold();
     try {
-      await writeCommand({ expression: "focused", auto_cycle: false, intensity: 1.0 });
+      await writeCommand({ expression: "suspicious", auto_cycle: false, intensity: 1.0 });
       await writeStatus(`Tool: ${tool}`);
     } catch (err) {
       noteIoError(err);

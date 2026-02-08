@@ -17,15 +17,34 @@ const COMMAND_FILE = path.join(CONFIG_DIR, "command.json");
 const STATUS_FILE = path.join(CONFIG_DIR, "status.txt");
 
 const VALID_EXPRESSIONS = new Set([
-  "neutral",
+  // Canonical (OLED eye presets)
+  "normal",
   "happy",
   "sad",
   "angry",
   "surprised",
+  "suspicious",
+  "cute",
+  "tired",
+  "wonder",
+  "upset",
+  "confused",
+  "scared",
   "sleepy",
-  "wink",
+  "glee",
+  "skeptic",
+  // Compat aliases (mapped client-side)
+  "neutral",
   "love",
+  "focused",
+  "thinking",
+  "excited",
+  "glitch",
+  "smug",
+  "sleep",
+  "wink",
   "talking",
+  "typing",
 ]);
 
 let idleTimer: NodeJS.Timeout | undefined;
@@ -83,7 +102,7 @@ function scheduleIdleFallback(): void {
   if (idleTimer) clearTimeout(idleTimer);
   idleTimer = setTimeout(() => {
     // Fire-and-forget: if it fails, it's not worth crashing the gateway.
-    writeCommand({ expression: "neutral", auto_cycle: true }).catch(() => {});
+    writeCommand({ expression: "normal", auto_cycle: true }).catch(() => {});
     writeStatus("Ready").catch(() => {});
   }, 30_000);
 }
@@ -93,14 +112,14 @@ export default async function handler(event: AnyEvent): Promise<void> {
 
   if (name === "gateway:startup" || name === "agent:bootstrap") {
     if (idleTimer) clearTimeout(idleTimer);
-    await writeCommand({ expression: "neutral", auto_cycle: true });
+    await writeCommand({ expression: "normal", auto_cycle: true });
     await writeStatus("Ready");
     return;
   }
 
   if (name === "command:new") {
     const summary = bestEffortCommandSummary(event);
-    await writeCommand({ expression: "talking", auto_cycle: false });
+    await writeCommand({ expression: "normal", auto_cycle: false });
     await writeStatus(summary ? `Working on: ${summary}` : "Working...");
     scheduleIdleFallback();
     return;
@@ -108,7 +127,7 @@ export default async function handler(event: AnyEvent): Promise<void> {
 
   if (name === "command:reset") {
     if (idleTimer) clearTimeout(idleTimer);
-    await writeCommand({ expression: "wink", auto_cycle: true });
+    await writeCommand({ expression: "happy", auto_cycle: true });
     await writeStatus("Ready");
     return;
   }

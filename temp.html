@@ -1,0 +1,365 @@
+<!DOCTYPE html> <html lang="en"> <head> <meta charset="UTF-8"> <meta name="viewport" content="width=device-width, initial-scale=1.0"> <title>OLED Robot Eyes — 
+Cozmo-Style Animations</title> <style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Outfit:wght@300;500;700&display=swap');
+  :root {
+    --oled-blue: #00b8ff; --oled-dim: #005a7a; --oled-glow: rgba(0,184,255,0.15); --bg: #06090e; --card: #0d1218; --border: #151e2a; --text: #c0cee0; --dim: 
+    #4a5a70;
+    --accent: #00e5ff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; } body { background: var(--bg); color: var(--text); font-family: 'Outfit', sans-serif; min-height: 100vh; 
+    display: flex; flex-direction: column; align-items: center;
+  }
+  header { text-align: center; padding: 1.6rem 1rem 0.8rem; } header h1 { font-family: 'Share Tech Mono', monospace; font-size: 1.2rem; color: 
+    var(--oled-blue); letter-spacing: 0.18em; text-transform: uppercase; text-shadow: 0 0 20px var(--oled-glow);
+  }
+  header p { font-size: 0.75rem; color: var(--dim); margin-top: 0.3rem; font-weight: 300; } /* OLED Display */ .oled-wrap { position: relative; margin: 1rem 
+    auto; padding: 16px; background: #020204; border-radius: 6px; border: 2px solid #15151f; box-shadow: 0 0 50px rgba(0,184,255,0.04), inset 0 0 40px 
+    rgba(0,0,0,0.9);
+  }
+  .oled-wrap::before { content: 'SSD1306 · 128×64'; position: absolute; top: -16px; left: 16px; font-family: 'Share Tech Mono', monospace; font-size: 0.5rem; 
+    color: var(--dim); letter-spacing: 0.12em;
+  }
+  canvas { display: block; border-radius: 3px; image-rendering: pixelated; } .scanlines { position: absolute; top: 16px; left: 16px; right: 16px; bottom: 16px; 
+    border-radius: 3px; pointer-events: none; background-image:
+      linear-gradient(rgba(0,0,0,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,0.06) 1px, transparent 1px); background-size: 4px 4px; opacity: 
+    0.6;
+  }
+  .status { font-family: 'Share Tech Mono', monospace; font-size: 0.55rem; color: var(--dim); text-align: center; margin-top: 6px; letter-spacing: 0.06em;
+  }
+  .status span { color: var(--oled-blue); } /* Controls panel */ .controls { width: 100%; max-width: 580px; padding: 0.8rem 1rem 2rem; } .section { 
+  margin-bottom: 1rem; } .section h3 {
+    font-family: 'Share Tech Mono', monospace; font-size: 0.58rem; color: var(--dim); text-transform: uppercase; letter-spacing: 0.2em; margin-bottom: 0.5rem; 
+    padding-left: 2px;
+  }
+  .chip-grid { display: flex; flex-wrap: wrap; gap: 5px; } .chip { font-family: 'Share Tech Mono', monospace; font-size: 0.66rem; padding: 6px 11px; 
+    background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 3px; cursor: pointer; transition: all 0.12s; user-select: 
+    none; letter-spacing: 0.04em;
+  }
+  .chip:hover { background: #151e2a; border-color: var(--oled-dim); color: var(--oled-blue); } .chip:active, .chip.on { background: rgba(0,184,255,0.1); 
+    border-color: var(--oled-blue); color: var(--oled-blue); box-shadow: 0 0 10px rgba(0,184,255,0.12);
+  }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; } /* D-pad */ .dpad { display: grid; grid-template-columns: repeat(3,40px); 
+    grid-template-rows: repeat(3,40px); gap: 3px; justify-content: center; width: fit-content; margin: 0 auto;
+  }
+  .dpad .chip { display: flex; align-items: center; justify-content: center; padding: 0; width: 40px; height: 40px; font-size: 0.95rem;
+  }
+  .dpad .center { background: rgba(0,184,255,0.04); border-color: var(--oled-dim); font-size: 0.45rem; } /* Sliders */ .slider-row { display: flex; 
+  align-items: center; gap: 8px; margin-bottom: 5px; } .slider-row label {
+    font-family: 'Share Tech Mono', monospace; font-size: 0.58rem; color: var(--dim); min-width: 72px; text-transform: uppercase; letter-spacing: 0.08em;
+  }
+  .slider-row input[type="range"] { flex: 1; -webkit-appearance: none; appearance: none; height: 3px; background: var(--border); border-radius: 2px; outline: 
+    none;
+  }
+  .slider-row input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; background: var(--oled-blue); border-radius: 
+    50%; cursor: pointer; box-shadow: 0 0 5px rgba(0,184,255,0.35);
+  }
+  .slider-row .v { font-family: 'Share Tech Mono', monospace; font-size: 0.58rem; color: var(--oled-blue); min-width: 24px; text-align: right;
+  }
+  .toggle-row { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; } .toggle-row label { font-family: 'Share Tech Mono', monospace; font-size: 
+    0.58rem; color: var(--dim); text-transform: uppercase; letter-spacing: 0.08em; cursor: pointer;
+  }
+  .tog { width: 32px; height: 16px; background: var(--border); border-radius: 8px; cursor: pointer; position: relative; transition: background 0.2s;
+  }
+  .tog.on { background: var(--oled-dim); } .tog::after { content: ''; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; background: 
+    var(--dim); border-radius: 50%; transition: all 0.2s;
+  }
+  .tog.on::after { left: 18px; background: var(--oled-blue); box-shadow: 0 0 5px rgba(0,184,255,0.4); } @media (max-width: 500px) { .two-col { 
+    grid-template-columns: 1fr; } canvas { width: 100%; height: auto; } .oled-wrap { margin: 0.5rem; }
+  }
+</style> </head> <body> <header> <h1>OLED Robot Eyes</h1> <p>Cozmo-inspired parametric animations · Akno + esp32-eyes + pstarz7</p> </header> <div 
+class="oled-wrap">
+  <canvas id="oled" width="512" height="256"></canvas> <div class="scanlines"></div> </div> <div class="status"> Expression: <span id="stMood">NORMAL</span> 
+  &nbsp;·&nbsp; Gaze: <span id="stGaze">CENTER</span> &nbsp;·&nbsp; <span id="stFPS">60</span> FPS
+</div> <div class="controls"> <div class="section"> <h3>Expressions (1-9, 0, -, =)</h3> <div class="chip-grid" id="moodGrid"> <button class="chip on" 
+      data-mood="normal">Normal</button> <button class="chip" data-mood="happy">Happy</button> <button class="chip" data-mood="sad">Sad</button> <button 
+      class="chip" data-mood="angry">Angry</button> <button class="chip" data-mood="surprised">Surprised</button> <button class="chip" 
+      data-mood="suspicious">Suspicious</button> <button class="chip" data-mood="cute">Cute</button> <button class="chip" data-mood="tired">Tired</button> 
+      <button class="chip" data-mood="wonder">Wonder</button> <button class="chip" data-mood="upset">Upset</button> <button class="chip" 
+      data-mood="confused">Confused</button> <button class="chip" data-mood="scared">Scared</button> <button class="chip" data-mood="sleepy">Sleepy</button> 
+      <button class="chip" data-mood="glee">Glee</button> <button class="chip" data-mood="skeptic">Skeptic</button>
+    </div> </div> <div class="two-col"> <div class="section"> <h3>Actions</h3> <div class="chip-grid"> <button class="chip" id="aBlink">Blink</button> <button 
+        class="chip" id="aSleep">Sleep</button> <button class="chip" id="aWake">Wake</button> <button class="chip" id="aConfuse">Confuse</button> <button 
+        class="chip" id="aWink">Wink L</button> <button class="chip" id="aWinkR">Wink R</button>
+      </div> </div> <div class="section"> <h3>Gaze (Arrow keys)</h3> <div class="dpad"> <div></div><button class="chip" data-dir="up">↑</button><div></div> 
+        <button class="chip" data-dir="left">←</button> <button class="chip center" data-dir="center">●</button> <button class="chip" 
+        data-dir="right">→</button> <div></div><button class="chip" data-dir="down">↓</button><div></div>
+      </div> </div> </div> <div class="section"> <h3>Parameters</h3> <div class="slider-row"> <label>Eye Width</label> <input type="range" id="sW" min="12" 
+      max="48" value="28"> <span class="v" id="vW">28</span>
+    </div> <div class="slider-row"> <label>Eye Height</label> <input type="range" id="sH" min="12" max="52" value="36"> <span class="v" id="vH">36</span> 
+    </div> <div class="slider-row">
+      <label>Gap</label> <input type="range" id="sG" min="10" max="70" value="40"> <span class="v" id="vG">40</span> </div> <div class="slider-row"> 
+      <label>Radius</label> <input type="range" id="sR" min="0" max="20" value="8"> <span class="v" id="vR">8</span>
+    </div> <div class="toggle-row"> <div class="tog on" id="tBlink"></div><label>Auto-Blink</label> </div> <div class="toggle-row"> <div class="tog on" 
+      id="tIdle"></div><label>Idle Saccades</label>
+    </div> <div class="toggle-row"> <div class="tog" id="tRandom"></div><label>Random Moods</label> </div> </div> </div> <script>
+// ============================================================ OLED ROBOT EYES ENGINE v2 — Cozmo-inspired parametric system 
+// ============================================================
+const C = document.getElementById('oled').getContext('2d'); const VW = 128, VH = 64, S = 4; // virtual OLED at 4x scale
+// ---- Easing ----
+function lerp(a, b, t) { return a + (b - a) * t; } function ease(t) { return t < 0.5 ? 2*t*t : -1+(4-2*t)*t; } // ease in-out quad function smoothStep(a, b, 
+speed, dt) { return lerp(a, b, 1 - Math.pow(1 - speed, dt * 60)); }
+// ---- Expression Presets (Cozmo/esp32-eyes style) ---- Each defines per-eye parameters: w, h: size multiplier; r: corner radius add; offY: vertical offset; 
+//   tiltTop/tiltBot: lid angle (px); lidTop/lidBot: lid closure 0-1; scaleX: squash asymmetric: if true, L and R can differ
+const PRESETS = { normal: { L: { w:0, h:0, offY:0, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, scaleX:1 }, R: { w:0, h:0, offY:0, tiltTop:0, tiltBot:0, lidTop:0, 
+    lidBot:0, scaleX:1 }, transitionSpeed: 6,
+  },
+  happy: { L: { w:0, h:0, offY:0, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, scaleX:1 }, R: { w:0, h:0, offY:0, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, 
+    scaleX:1 }, pupilScale: 1.5, transitionSpeed: 7,
+  },
+  sad: { L: { w:-2, h:-3, offY:2, tiltTop:5, tiltBot:0, lidTop:0.25, lidBot:0, scaleX:0.95 }, R: { w:-2, h:-3, offY:2, tiltTop:-5, tiltBot:0, lidTop:0.25, 
+    lidBot:0, scaleX:0.95 }, transitionSpeed: 4,
+  },
+  angry: { L: { w:3, h:-4, offY:0, tiltTop:-7, tiltBot:0, lidTop:0.38, lidBot:0, scaleX:1.08 }, R: { w:3, h:-4, offY:0, tiltTop:7, tiltBot:0, lidTop:0.38, 
+    lidBot:0, scaleX:1.08 }, transitionSpeed: 8,
+  },
+  surprised: { L: { w:6, h:8, offY:-2, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, scaleX:1 }, R: { w:6, h:8, offY:-2, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, 
+    scaleX:1 }, transitionSpeed: 10,
+  },
+  suspicious: { L: { w:1, h:-8, offY:1, tiltTop:-4, tiltBot:2, lidTop:0.30, lidBot:0.20, scaleX:1.1 }, R: { w:-2, h:-4, offY:0, tiltTop:0, tiltBot:0, 
+    lidTop:0.10, lidBot:0, scaleX:0.9 }, transitionSpeed: 5,
+  },
+  cute: { L: { w:5, h:5, offY:1, tiltTop:0, tiltBot:-2, lidTop:0, lidBot:0.30, scaleX:1 }, R: { w:5, h:5, offY:1, tiltTop:0, tiltBot:2, lidTop:0, lidBot:0.30, 
+    scaleX:1 }, transitionSpeed: 6,
+  },
+  tired: { L: { w:-1, h:-6, offY:3, tiltTop:3, tiltBot:0, lidTop:0.42, lidBot:0, scaleX:0.95 }, R: { w:-1, h:-6, offY:3, tiltTop:-3, tiltBot:0, lidTop:0.42, 
+    lidBot:0, scaleX:0.95 }, transitionSpeed: 3,
+  },
+  wonder: { L: { w:4, h:7, offY:-1, tiltTop:2, tiltBot:0, lidTop:0, lidBot:0, scaleX:0.95 }, R: { w:6, h:9, offY:-2, tiltTop:-2, tiltBot:0, lidTop:0, lidBot:0, 
+    scaleX:1.05 }, transitionSpeed: 6,
+  },
+  upset: { L: { w:0, h:-2, offY:2, tiltTop:6, tiltBot:-2, lidTop:0.18, lidBot:0.10, scaleX:1 }, R: { w:0, h:-2, offY:2, tiltTop:-6, tiltBot:2, lidTop:0.18, 
+    lidBot:0.10, scaleX:1 }, transitionSpeed: 5,
+  },
+  confused: { L: { w:-3, h:2, offY:-2, tiltTop:4, tiltBot:0, lidTop:0.15, lidBot:0, scaleX:0.9 }, R: { w:4, h:4, offY:1, tiltTop:-2, tiltBot:0, lidTop:0, 
+    lidBot:0, scaleX:1.1 }, transitionSpeed: 6,
+  },
+  scared: { L: { w:5, h:8, offY:-1, tiltTop:4, tiltBot:0, lidTop:0, lidBot:0.05, scaleX:0.92 }, R: { w:5, h:8, offY:-1, tiltTop:-4, tiltBot:0, lidTop:0, 
+    lidBot:0.05, scaleX:0.92 }, transitionSpeed: 10,
+  },
+  sleepy: { L: { w:-2, h:-12, offY:4, tiltTop:2, tiltBot:0, lidTop:0.55, lidBot:0, scaleX:1 }, R: { w:-2, h:-12, offY:4, tiltTop:-2, tiltBot:0, lidTop:0.55, 
+    lidBot:0, scaleX:1 }, transitionSpeed: 2,
+  },
+  glee: { L: { w:3, h:-4, offY:0, tiltTop:0, tiltBot:-5, lidTop:0, lidBot:0.50, scaleX:1.1 }, R: { w:3, h:-4, offY:0, tiltTop:0, tiltBot:5, lidTop:0, 
+    lidBot:0.50, scaleX:1.1 }, transitionSpeed: 8,
+  },
+  skeptic: { L: { w:0, h:0, offY:0, tiltTop:-5, tiltBot:0, lidTop:0.35, lidBot:0, scaleX:1 }, R: { w:2, h:4, offY:-1, tiltTop:2, tiltBot:0, lidTop:0, lidBot:0, 
+    scaleX:1 }, transitionSpeed: 5,
+  },
+};
+// ---- State ----
+const eye = {
+  // Base params (set by sliders)
+  baseW: 28, baseH: 36, gap: 40, cornerR: 8,
+  // Current per-eye interpolated state
+  L: { w:0,h:0,offY:0,tiltTop:0,tiltBot:0,lidTop:0,lidBot:0,scaleX:1 }, R: { w:0,h:0,offY:0,tiltTop:0,tiltBot:0,lidTop:0,lidBot:0,scaleX:1 },
+  // Gaze
+  gazeTargX: 0, gazeTargY: 0, gazeX: 0, gazeY: 0,
+  // Blink (0=open, 1=closed)
+  blinkL: 0, blinkR: 0, blinkLDir: 0, blinkRDir: 0,
+  // Sleeping
+  sleeping: false, sleepT: 0,
+  // Confusion offset
+  confL: 0, confR: 0, confTimer: 0,
+  // Transition speed
+  tSpeed: 6,
+  // Corner radius modifier (interpolated per expression)
+  cornerRMod: 0,
+  // Pupil scale modifier (interpolated per expression)
+  pupilScale: 1,
+  // Mood
+  mood: 'normal',
+  // Happy wink state
+  happyWinkTimer: 0, happyWinkSide: 0, // 0=left next, 1=right next
+  // Toggles
+  autoBlink: true, idleMove: true, randomMood: false,
+  // Timers
+  blinkTimer: 2 + Math.random() * 3, saccadeTimer: 1 + Math.random() * 2, moodTimer: 5 + Math.random() * 8,
+};
+function setMood(name) { if (!PRESETS[name]) return; eye.mood = name; eye.tSpeed = PRESETS[name].transitionSpeed; eye.happyWinkTimer = 0.5 + Math.random() * 
+  0.8; eye.happyWinkSide = 0; document.getElementById('stMood').textContent = name.toUpperCase(); document.querySelectorAll('#moodGrid .chip').forEach(b =>
+    b.classList.toggle('on', b.dataset.mood === name));
+}
+// ---- Drawing Primitives ----
+function fillRoundRect(x, y, w, h, r) { r = Math.min(r, w/2, h/2); if (r < 0) r = 0; C.beginPath(); C.moveTo((x+r)*S, y*S); C.lineTo((x+w-r)*S, y*S); 
+  C.quadraticCurveTo((x+w)*S, y*S, (x+w)*S, (y+r)*S); C.lineTo((x+w)*S, (y+h-r)*S); C.quadraticCurveTo((x+w)*S, (y+h)*S, (x+w-r)*S, (y+h)*S); C.lineTo((x+r)*S, 
+  (y+h)*S); C.quadraticCurveTo(x*S, (y+h)*S, x*S, (y+h-r)*S); C.lineTo(x*S, (y+r)*S); C.quadraticCurveTo(x*S, y*S, (x+r)*S, y*S); C.closePath(); C.fill();
+}
+function drawEye(cx, cy, baseW, baseH, r, ep, gazeX, gazeY, blink, pupilScale) { const ew = (baseW + ep.w) * ep.scaleX;
+  // Keep a minimum slit (3px) when sleeping/blinking so eyes never fully vanish
+  const fullH = baseH + ep.h; const minH = 3; const eh = Math.max(minH, fullH * (1 - blink)); const oy = ep.offY * (1 - blink * 0.7); // reduce offset when 
+  closing const x = cx - ew / 2; const y = cy - eh / 2 + oy;
+  // --- Draw main eye shape ---
+  C.fillStyle = '#00b8ff'; fillRoundRect(x, y, ew, eh, Math.min(r, eh / 2));
+  // --- Draw black pupil (centered) --- Only draw when eye is open enough to see it
+  if (eh > 8) { const ps = pupilScale || 1; const pupilW = ew * 0.38 * ps; const pupilH = eh * 0.40 * ps; const pupilR = Math.min(Math.min(r, pupilW / 2, 
+    pupilH / 2), 6 * ps); const px = cx - pupilW / 2; const py = cy + oy - pupilH / 2; C.fillStyle = '#000'; fillRoundRect(px, py, pupilW, pupilH, pupilR);
+  }
+  // --- Draw angled top lid ---
+  if (ep.lidTop > 0.02 || Math.abs(ep.tiltTop) > 0.5) { const lidH = eh * Math.max(ep.lidTop, 0) + Math.abs(ep.tiltTop); if (lidH > 0.5) { C.fillStyle = 
+      '#000'; C.beginPath(); const lx = (x - 2) * S; const rx = (x + ew + 2) * S; const lyTop = (y - 3) * S; const lyBot = (y + lidH + ep.tiltTop) * S; const 
+      ryBot = (y + lidH - ep.tiltTop) * S; C.moveTo(lx, lyTop); C.lineTo(rx, lyTop); C.lineTo(rx, ryBot); C.lineTo(lx, lyBot); C.closePath(); C.fill();
+    }
+  }
+  // --- Draw angled bottom lid ---
+  if (ep.lidBot > 0.02 || Math.abs(ep.tiltBot) > 0.5) { const lidH = eh * Math.max(ep.lidBot, 0) + Math.abs(ep.tiltBot); if (lidH > 0.5) { C.fillStyle = 
+      '#000'; C.beginPath(); const lx = (x - 2) * S; const rx = (x + ew + 2) * S; const lyBot = (y + eh + 3) * S; const lyTop = (y + eh - lidH + ep.tiltBot) * 
+      S; const ryTop = (y + eh - lidH - ep.tiltBot) * S; C.moveTo(lx, lyTop); C.lineTo(rx, ryTop); C.lineTo(rx, lyBot); C.lineTo(lx, lyBot); C.closePath(); 
+      C.fill();
+    }
+  }
+}
+// ---- Main Render ----
+function render() { C.fillStyle = '#000'; C.fillRect(0, 0, VW*S, VH*S); const e = eye; const leftCX = VW/2 - e.gap/2 + e.confL; const rightCX = VW/2 + e.gap/2 
+  + e.confR; const cy = VH/2 - 5; // shifted up to leave room for status
+  // Sleep caps at 0.92 so a thin slit remains; regular blinks go to 1.0 (full close)
+  const sleepBlink = e.sleepT * 0.92; const blinkL = Math.max(e.blinkL, sleepBlink); const blinkR = Math.max(e.blinkR, sleepBlink); const effectiveR = 
+  e.cornerR + e.cornerRMod; drawEye(leftCX, cy, e.baseW, e.baseH, effectiveR, e.L, e.gazeX, e.gazeY, blinkL, e.pupilScale); drawEye(rightCX, cy, e.baseW, 
+  e.baseH, effectiveR, e.R, e.gazeX, e.gazeY, blinkR, e.pupilScale);
+  // --- Status ticker at bottom of OLED ---
+  renderStatus();
+}
+// ---- Status Ticker System ----
+const STATUS_MESSAGES = [ { icon: '●', text: 'GitHub Actions: build passed' }, { icon: '↻', text: 'Updating configs...' }, { icon: '↻', text: 'Updating 
+  system...' }, { icon: '●', text: 'GitHub Actions: deploy #482' }, { icon: '↑', text: 'Pushing to main...' }, { icon: '✓', text: 'NixOS rebuild complete' }, { 
+  icon: '↻', text: 'Syncing dotfiles...' }, { icon: '●', text: 'CI: all checks passed' }, { icon: '↓', text: 'Pulling latest changes...' }, { icon: '✓', text: 
+  'Containers healthy' }, { icon: '↻', text: 'Refreshing certificates...' }, { icon: '●', text: 'GitHub Actions: test suite' }, { icon: '✓', text: 'Backup 
+  completed' }, { icon: '↻', text: 'Updating dependencies...' }, { icon: '●', text: 'Deploy: production v3.2.1' }, { icon: '↓', text: 'Fetching upstream...' }, 
+  { icon: '✓', text: 'DNS propagation complete' }, { icon: '↻', text: 'Reloading services...' }, { icon: '●', text: 'PR #127 merged to main' }, { icon: '✓', 
+  text: 'SSL cert renewed' },
+]; const statusState = { currentIdx: 0, displayText: '', targetText: '', charIdx: 0, phase: 'typing', // 'typing' | 'hold' | 'erasing' timer: 0, typeSpeed: 
+  0.04, // seconds per char holdTime: 3.0, // seconds to show full message eraseSpeed: 0.02,
+};
+function advanceStatus() { const ss = statusState; ss.currentIdx = (ss.currentIdx + 1) % STATUS_MESSAGES.length; const msg = STATUS_MESSAGES[ss.currentIdx]; 
+  ss.targetText = msg.icon + ' ' + msg.text; ss.charIdx = 0; ss.displayText = ''; ss.phase = 'typing'; ss.timer = 0;
+}
+function updateStatus(dt) { const ss = statusState; ss.timer += dt; if (ss.phase === 'typing') { if (ss.timer >= ss.typeSpeed) { ss.timer = 0; ss.charIdx++; 
+      ss.displayText = ss.targetText.substring(0, ss.charIdx); if (ss.charIdx >= ss.targetText.length) {
+        ss.phase = 'hold'; ss.timer = 0;
+      }
+    }
+  } else if (ss.phase === 'hold') {
+    if (ss.timer >= ss.holdTime) { ss.phase = 'erasing'; ss.timer = 0;
+    }
+  } else if (ss.phase === 'erasing') {
+    if (ss.timer >= ss.eraseSpeed) { ss.timer = 0; ss.charIdx--; ss.displayText = ss.targetText.substring(0, ss.charIdx); if (ss.charIdx <= 0) { 
+        advanceStatus();
+      }
+    }
+  }
+}
+function renderStatus() { const ss = statusState; if (!ss.displayText) return;
+  // Draw centered text
+  C.font = `${7 * S}px "Share Tech Mono", monospace`; C.textBaseline = 'top'; C.textAlign = 'center'; C.fillStyle = '#006a8a'; C.fillText(ss.displayText, (VW / 
+  2) * S, 56 * S);
+  // Blinking cursor
+  if (ss.phase === 'typing' || (ss.phase === 'hold' && Math.floor(Date.now() / 500) % 2 === 0)) { const textW = C.measureText(ss.displayText).width; const 
+    cursorX = (VW / 2) * S + textW / 2; C.fillStyle = '#00b8ff'; C.fillRect(cursorX + 1, 56 * S, 2 * S, 7 * S);
+  }
+  C.textAlign = 'left'; // reset
+}
+// Init first message
+advanceStatus();
+// ---- Update Loop ----
+let lastT = 0, frames = 0, fpsClock = 0; function update(ts) { const dt = Math.min((ts - lastT) / 1000, 0.05); lastT = ts; frames++; fpsClock += dt; if 
+  (fpsClock >= 1) {
+    document.getElementById('stFPS').textContent = frames; frames = 0; fpsClock = 0;
+  }
+  const e = eye; const spd = e.tSpeed;
+  // Interpolate per-eye params toward preset target
+  const preset = PRESETS[e.mood]; const fields = ['w','h','offY','tiltTop','tiltBot','lidTop','lidBot','scaleX']; for (const f of fields) { e.L[f] = 
+    smoothStep(e.L[f], preset.L[f], spd * 0.08, dt); e.R[f] = smoothStep(e.R[f], preset.R[f], spd * 0.08, dt);
+  }
+  // Interpolate corner radius modifier
+  const targetCRM = preset.cornerRMod || 0; e.cornerRMod = smoothStep(e.cornerRMod, targetCRM, spd * 0.08, dt);
+  // Interpolate pupil scale
+  const targetPS = preset.pupilScale || 1; e.pupilScale = smoothStep(e.pupilScale, targetPS, spd * 0.08, dt);
+  // Gaze smoothing
+  e.gazeX = smoothStep(e.gazeX, e.gazeTargX, 8 * 0.08, dt); e.gazeY = smoothStep(e.gazeY, e.gazeTargY, 8 * 0.08, dt);
+  // Blink animation
+  if (e.blinkLDir) { e.blinkL += e.blinkLDir * 0.18 * dt * 60; if (e.blinkL >= 1) { e.blinkL = 1; e.blinkLDir = -1; } if (e.blinkL <= 0) { e.blinkL = 0; 
+    e.blinkLDir = 0; }
+  }
+  if (e.blinkRDir) { e.blinkR += e.blinkRDir * 0.18 * dt * 60; if (e.blinkR >= 1) { e.blinkR = 1; e.blinkRDir = -1; } if (e.blinkR <= 0) { e.blinkR = 0; 
+    e.blinkRDir = 0; }
+  }
+  // Sleep
+  if (e.sleeping) e.sleepT = Math.min(1, e.sleepT + dt * 1.5); else e.sleepT = Math.max(0, e.sleepT - dt * 3);
+  // Confusion decay
+  if (e.confTimer > 0) { e.confTimer -= dt; if (e.confTimer <= 0) { e.confL = 0; e.confR = 0; }
+  } else {
+    e.confL = smoothStep(e.confL, 0, 4 * 0.08, dt); e.confR = smoothStep(e.confR, 0, 4 * 0.08, dt);
+  }
+  // Auto-blink
+  if (e.autoBlink && !e.sleeping && e.blinkLDir === 0 && e.mood !== 'happy') { e.blinkTimer -= dt; if (e.blinkTimer <= 0) { doBlink(); e.blinkTimer = 1.5 + 
+      Math.random() * 4;
+    }
+  }
+  // Happy expression: faster alternating winks
+  if (e.mood === 'happy' && !e.sleeping && e.blinkLDir === 0 && e.blinkRDir === 0) { e.happyWinkTimer -= dt; if (e.happyWinkTimer <= 0) { if (e.happyWinkSide 
+      === 0) {
+        doWinkL();
+      } else {
+        doWinkR();
+      }
+      e.happyWinkSide = 1 - e.happyWinkSide; e.happyWinkTimer = 0.8 + Math.random() * 1.2;
+    }
+  }
+  // Idle saccades
+  if (e.idleMove && e.gazeTargX === 0 && e.gazeTargY === 0 && !e.sleeping) { e.saccadeTimer -= dt; if (e.saccadeTimer <= 0) { e.gazeX += (Math.random() - 0.5) 
+      * 0.35; e.gazeY += (Math.random() - 0.5) * 0.25; e.gazeX = Math.max(-0.5, Math.min(0.5, e.gazeX)); e.gazeY = Math.max(-0.4, Math.min(0.4, e.gazeY)); 
+      e.saccadeTimer = 0.4 + Math.random() * 2;
+    }
+  }
+  // Random mood
+  if (e.randomMood && !e.sleeping) { e.moodTimer -= dt; if (e.moodTimer <= 0) { const moods = Object.keys(PRESETS); const pick = moods[Math.floor(Math.random() 
+      * moods.length)]; setMood(pick); e.moodTimer = 3 + Math.random() * 6;
+    }
+  }
+  updateStatus(dt); render(); requestAnimationFrame(update);
+}
+// ---- Actions ----
+function doBlink() { eye.blinkLDir = 1; eye.blinkL = 0; eye.blinkRDir = 1; eye.blinkR = 0; } function doWinkL() { eye.blinkLDir = 1; eye.blinkL = 0; } function 
+doWinkR() { eye.blinkRDir = 1; eye.blinkR = 0; }
+// ---- UI Bindings ----
+document.querySelectorAll('#moodGrid .chip').forEach(b => b.addEventListener('click', () => { eye.sleeping = false; setMood(b.dataset.mood); })); 
+document.querySelectorAll('[data-dir]').forEach(b => {
+  const dirs = { up:[0,-1], down:[0,1], left:[-1,0], right:[1,0], center:[0,0] }; b.addEventListener('click', () => { eye.sleeping = false; const [gx,gy] = 
+    dirs[b.dataset.dir]; eye.gazeTargX = gx; eye.gazeTargY = gy; document.getElementById('stGaze').textContent = b.dataset.dir.toUpperCase();
+  });
+});
+document.getElementById('aBlink').addEventListener('click', () => { if (!eye.sleeping) doBlink(); }); 
+document.getElementById('aSleep').addEventListener('click', () => {
+  eye.sleeping = true; eye.gazeTargX = 0; eye.gazeTargY = 0; document.getElementById('stGaze').textContent = 'SLEEP';
+});
+document.getElementById('aWake').addEventListener('click', () => { eye.sleeping = false; document.getElementById('stGaze').textContent = 'CENTER';
+});
+document.getElementById('aConfuse').addEventListener('click', () => { eye.sleeping = false; eye.confTimer = 1.8; eye.confL = 5 + Math.random() * 3; eye.confR = 
+  -(5 + Math.random() * 3);
+});
+document.getElementById('aWink').addEventListener('click', doWinkL); document.getElementById('aWinkR').addEventListener('click', doWinkR);
+// Sliders
+function bindSlider(sId, vId, prop) { const sl = document.getElementById(sId), vl = document.getElementById(vId); sl.addEventListener('input', () => { const v 
+  = +sl.value; vl.textContent = v; eye[prop] = v; });
+}
+bindSlider('sW','vW','baseW'); bindSlider('sH','vH','baseH'); bindSlider('sG','vG','gap'); bindSlider('sR','vR','cornerR');
+// Toggles
+function bindToggle(id, prop) { const el = document.getElementById(id); el.addEventListener('click', () => { eye[prop] = !eye[prop]; el.classList.toggle('on', 
+  eye[prop]); }); el.nextElementSibling.addEventListener('click', () => el.click());
+}
+bindToggle('tBlink','autoBlink'); bindToggle('tIdle','idleMove'); bindToggle('tRandom','randomMood');
+// Keyboard
+const moodKeys = ['1','2','3','4','5','6','7','8','9','0','-','=','q','w','e']; const moodNames = Object.keys(PRESETS); document.addEventListener('keydown', e 
+=> {
+  const k = e.key.toLowerCase(); const mi = moodKeys.indexOf(k); if (mi >= 0 && mi < moodNames.length) { eye.sleeping = false; setMood(moodNames[mi]); return; 
+  }
+  if (k === 'arrowup') { eye.gazeTargY = -1; e.preventDefault(); } if (k === 'arrowdown') { eye.gazeTargY = 1; e.preventDefault(); } if (k === 'arrowleft') { 
+  eye.gazeTargX = -1; e.preventDefault(); } if (k === 'arrowright') { eye.gazeTargX = 1; e.preventDefault(); } if (k === ' ') { doBlink(); e.preventDefault(); 
+  }
+  if (k === 'escape') { eye.gazeTargX = 0; eye.gazeTargY = 0; }
+});
+document.addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (['arrowup','arrowdown'].includes(k)) eye.gazeTargY = 0; if 
+  (['arrowleft','arrowright'].includes(k)) eye.gazeTargX = 0;
+});
+// Start
+requestAnimationFrame(update); </script> </body>
+</html>
