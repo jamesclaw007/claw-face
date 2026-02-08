@@ -484,7 +484,7 @@ function renderStatus() {
   const ss = statusState;
   if (!ss.displayText && ss.phase === 'idle') return;
 
-  const fontSize = 7;
+  const fontSize = 5;
   C.font = `${fontSize * S}px "Share Tech Mono", monospace`;
   C.textBaseline = 'top';
   C.textAlign = 'center';
@@ -494,7 +494,7 @@ function renderStatus() {
   C.fillText(text, (VW / 2) * S, textY * S);
 
   // Blinking cursor
-  if (ss.phase === 'typing') {
+  if (ss.phase === 'typing' || (ss.phase === 'hold' && Math.floor(Date.now() / 500) % 2 === 0)) {
     const textW = C.measureText(text).width;
     const cursorX = (VW / 2) * S + textW / 2;
     C.fillStyle = EYE_COLOR;
