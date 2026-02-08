@@ -33,8 +33,6 @@ def test_validation_clamps_and_normalizes(tmp_path: Path) -> None:
                 "display": {
                     "fps": 9999,
                     "port": 99999,
-                    "dot_spacing": 0,
-                    "dot_radius": 0.1,
                     "window_width": 0,
                     "window_height": -1,
                 },
@@ -46,8 +44,5 @@ def test_validation_clamps_and_normalizes(tmp_path: Path) -> None:
     assert cfg.behavior.blink_interval_min <= cfg.behavior.blink_interval_max
     assert 1 <= cfg.display.fps <= 240
     assert 0 <= cfg.display.port <= 65535
-    assert cfg.display.dot_spacing >= 2
-    assert cfg.display.dot_radius >= 0.5
     assert cfg.display.window_width >= 1
     assert cfg.display.window_height >= 1
-

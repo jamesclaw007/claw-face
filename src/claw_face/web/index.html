@@ -4,8 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Claw Face</title>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap">
   <style>
+    @font-face {
+      font-family: 'Share Tech Mono';
+      font-style: normal;
+      font-weight: 400;
+      font-display: swap;
+      src: url('fonts/ShareTechMono-Regular.woff2') format('woff2');
+    }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       background: #000;
@@ -689,18 +695,70 @@ function frame(ts) {
 }
 
 // ============================================================
-// SERVER API: STATUS (poll every 1s)
+// SERVER API: SSE (replaces polling for status + command)
 // ============================================================
-function fetchStatus() {
-  fetch('/api/status')
-    .then(r => r.ok ? r.json() : Promise.reject())
-    .then(data => {
-      setStatusText(data.text || '');
-    })
-    .catch(() => {});
+function handleStatusEvent(data) {
+  setStatusText(data.text || '');
 }
-setInterval(fetchStatus, 1000);
-fetchStatus();
+
+function handleCommandEvent(cmd) {
+  if (!cmd || typeof cmd !== 'object') return;
+
+  if (typeof cmd.expression === 'string' && KNOWN_EXPRS.has(cmd.expression)) {
+    setExpression(cmd.expression);
+  }
+  if (typeof cmd.auto_cycle === 'boolean') {
+    autoCycleEnabled = cmd.auto_cycle;
+    autoCycleTimer = 0;
+  }
+
+  if (typeof cmd.intensity === 'number' && Number.isFinite(cmd.intensity)) {
+    cmdIntensity = clamp(cmd.intensity, 0, 1);
+  } else if (!('intensity' in cmd)) {
+    cmdIntensity = null;
+  }
+
+  if ('look' in cmd) {
+    if (cmd.look && typeof cmd.look === 'object') {
+      const x = cmd.look.x, y = cmd.look.y;
+      if (typeof x === 'number' && typeof y === 'number' && Number.isFinite(x) && Number.isFinite(y)) {
+        lookOverride = { x: clamp(x, -1, 1), y: clamp(y, -1, 1) };
+      } else {
+        lookOverride = null;
+      }
+    } else {
+      lookOverride = null;
+    }
+  } else {
+    lookOverride = null;
+  }
+
+  if (typeof cmd.blink_seq === 'number' && Number.isFinite(cmd.blink_seq)) {
+    const v = cmd.blink_seq | 0;
+    if (lastBlinkSeq === null) lastBlinkSeq = v;
+    else if (v !== lastBlinkSeq) {
+      lastBlinkSeq = v;
+      doBlink();
+    }
+  }
+
+  if (typeof cmd.sequence_seq === 'number' && Number.isFinite(cmd.sequence_seq)) {
+    const v = cmd.sequence_seq | 0;
+    if (lastSequenceSeq === null) lastSequenceSeq = v;
+    else if (v !== lastSequenceSeq) {
+      lastSequenceSeq = v;
+      if (typeof cmd.sequence === 'string') startSequence(cmd.sequence);
+    }
+  }
+}
+
+const sse = new EventSource('/api/events');
+sse.addEventListener('status', ev => {
+  try { handleStatusEvent(JSON.parse(ev.data)); } catch(e) {}
+});
+sse.addEventListener('command', ev => {
+  try { handleCommandEvent(JSON.parse(ev.data)); } catch(e) {}
+});
 
 // ============================================================
 // SERVER API: CONFIG (fetch once on startup)
@@ -753,65 +811,6 @@ fetch('/api/config')
   })
   .catch(() => {});
 
-// ============================================================
-// SERVER API: COMMAND (poll every 1s)
-// ============================================================
-function fetchCommand() {
-  fetch('/api/command')
-    .then(r => r.ok ? r.json() : Promise.reject())
-    .then(cmd => {
-      if (!cmd || typeof cmd !== 'object') return;
-
-      if (typeof cmd.expression === 'string' && KNOWN_EXPRS.has(cmd.expression)) {
-        setExpression(cmd.expression);
-      }
-      if (typeof cmd.auto_cycle === 'boolean') {
-        autoCycleEnabled = cmd.auto_cycle;
-        autoCycleTimer = 0;
-      }
-
-      if (typeof cmd.intensity === 'number' && Number.isFinite(cmd.intensity)) {
-        cmdIntensity = clamp(cmd.intensity, 0, 1);
-      } else if (!('intensity' in cmd)) {
-        cmdIntensity = null;
-      }
-
-      if ('look' in cmd) {
-        if (cmd.look && typeof cmd.look === 'object') {
-          const x = cmd.look.x, y = cmd.look.y;
-          if (typeof x === 'number' && typeof y === 'number' && Number.isFinite(x) && Number.isFinite(y)) {
-            lookOverride = { x: clamp(x, -1, 1), y: clamp(y, -1, 1) };
-          } else {
-            lookOverride = null;
-          }
-        } else {
-          lookOverride = null;
-        }
-      } else {
-        lookOverride = null;
-      }
-
-      if (typeof cmd.blink_seq === 'number' && Number.isFinite(cmd.blink_seq)) {
-        const v = cmd.blink_seq | 0;
-        if (lastBlinkSeq === null) lastBlinkSeq = v;
-        else if (v !== lastBlinkSeq) {
-          lastBlinkSeq = v;
-          doBlink();
-        }
-      }
-
-      if (typeof cmd.sequence_seq === 'number' && Number.isFinite(cmd.sequence_seq)) {
-        const v = cmd.sequence_seq | 0;
-        if (lastSequenceSeq === null) lastSequenceSeq = v;
-        else if (v !== lastSequenceSeq) {
-          lastSequenceSeq = v;
-          if (typeof cmd.sequence === 'string') startSequence(cmd.sequence);
-        }
-      }
-    })
-    .catch(() => {});
-}
-setInterval(fetchCommand, 1000);
 
 // ============================================================
 // KEYBOARD CONTROLS

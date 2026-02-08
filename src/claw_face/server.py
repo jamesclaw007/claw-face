@@ -1,11 +1,13 @@
 import ipaddress
 import json
 import logging
+import os
+import queue
 import threading
 import webbrowser
 from functools import partial
 from http import HTTPStatus
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from .config import CONFIG_DIR, Config
@@ -22,6 +24,156 @@ def _is_loopback_address(addr: str) -> bool:
         return ipaddress.ip_address(addr).is_loopback
     except ValueError:
         return False
+
+
+# ────────────────────────────────────────────────────────────
+# Shared file-reading helpers (used by REST endpoints + SSE)
+# ────────────────────────────────────────────────────────────
+
+
+def _read_status_data() -> dict:
+    """Read status.txt and return {"text": ...}."""
+    text = ""
+    try:
+        if STATUS_FILE.exists():
+            text = STATUS_FILE.read_text().strip()
+    except OSError:
+        pass
+    return {"text": text}
+
+
+def _read_command_data() -> dict:
+    """Read command.json and return validated/clamped fields."""
+    data = {}
+    try:
+        if COMMAND_FILE.exists():
+            raw = COMMAND_FILE.read_text().strip()
+            if raw:
+                data = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    out: dict[str, object] = {}
+    if isinstance(data, dict):
+        if isinstance(data.get("expression"), str):
+            out["expression"] = data["expression"]
+        if isinstance(data.get("auto_cycle"), bool):
+            out["auto_cycle"] = data["auto_cycle"]
+
+        intensity = data.get("intensity")
+        if isinstance(intensity, (int, float)) and intensity == intensity:
+            out["intensity"] = max(0.0, min(1.0, float(intensity)))
+
+        look = data.get("look")
+        if isinstance(look, dict):
+            x = look.get("x")
+            y = look.get("y")
+            if isinstance(x, (int, float)) and isinstance(y, (int, float)) and x == x and y == y:
+                out["look"] = {
+                    "x": max(-1.0, min(1.0, float(x))),
+                    "y": max(-1.0, min(1.0, float(y))),
+                }
+
+        blink_seq = data.get("blink_seq")
+        if isinstance(blink_seq, (int, float)) and blink_seq == blink_seq:
+            out["blink_seq"] = int(blink_seq)
+
+        seq = data.get("sequence")
+        if isinstance(seq, str):
+            out["sequence"] = seq
+        seq_seq = data.get("sequence_seq")
+        if isinstance(seq_seq, (int, float)) and seq_seq == seq_seq:
+            out["sequence_seq"] = int(seq_seq)
+    return out
+
+
+# ────────────────────────────────────────────────────────────
+# SSE Broker — watches files, broadcasts changes to clients
+# ────────────────────────────────────────────────────────────
+
+
+class SSEBroker:
+    """Watches status.txt and command.json, broadcasts changes via SSE."""
+
+    def __init__(self):
+        self._clients: set[queue.Queue] = set()
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        # Last known mtime_ns for change detection
+        self._status_mtime: int = 0
+        self._command_mtime: int = 0
+
+    def start(self):
+        self._thread = threading.Thread(target=self._watch, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=2)
+
+    def subscribe(self) -> queue.Queue:
+        q: queue.Queue = queue.Queue(maxsize=32)
+        # Push current state immediately so client doesn't wait
+        try:
+            q.put_nowait(("status", json.dumps(_read_status_data())))
+        except queue.Full:
+            pass
+        try:
+            q.put_nowait(("command", json.dumps(_read_command_data())))
+        except queue.Full:
+            pass
+        with self._lock:
+            self._clients.add(q)
+        return q
+
+    def unsubscribe(self, q: queue.Queue):
+        with self._lock:
+            self._clients.discard(q)
+
+    def _broadcast(self, event_type: str, data: str):
+        with self._lock:
+            dead = []
+            for q in self._clients:
+                try:
+                    q.put_nowait((event_type, data))
+                except queue.Full:
+                    dead.append(q)
+            for q in dead:
+                self._clients.discard(q)
+
+    def _stat_mtime(self, path: Path) -> int:
+        try:
+            return os.stat(path).st_mtime_ns
+        except OSError:
+            return 0
+
+    def _watch(self):
+        while not self._stop.is_set():
+            changed = False
+
+            mt = self._stat_mtime(STATUS_FILE)
+            if mt != self._status_mtime:
+                self._status_mtime = mt
+                self._broadcast("status", json.dumps(_read_status_data()))
+                changed = True
+
+            mt = self._stat_mtime(COMMAND_FILE)
+            if mt != self._command_mtime:
+                self._command_mtime = mt
+                self._broadcast("command", json.dumps(_read_command_data()))
+                changed = True
+
+            if not changed:
+                self._stop.wait(0.1)
+            else:
+                # Brief pause even on change to batch rapid writes
+                self._stop.wait(0.05)
+
+
+# ────────────────────────────────────────────────────────────
+# Request Handler
+# ────────────────────────────────────────────────────────────
 
 
 class ClawFaceHandler(SimpleHTTPRequestHandler):
@@ -50,15 +202,19 @@ class ClawFaceHandler(SimpleHTTPRequestHandler):
         return False
 
     def do_GET(self):
-        if self.path == '/api/status':
+        if self.path == "/api/status":
             self._handle_status()
-        elif self.path == '/api/command':
+        elif self.path == "/api/command":
             self._handle_command()
-        elif self.path == '/api/config':
+        elif self.path == "/api/config":
             self._handle_config()
-        elif self.path == '/api/fullscreen/toggle':
+        elif self.path == "/api/expressions":
+            self._handle_expressions()
+        elif self.path == "/api/events":
+            self._handle_events()
+        elif self.path == "/api/fullscreen/toggle":
             self._handle_fullscreen_toggle()
-        elif self.path == '/api/quit':
+        elif self.path == "/api/quit":
             self._handle_quit()
         else:
             super().do_GET()
@@ -75,60 +231,14 @@ class ClawFaceHandler(SimpleHTTPRequestHandler):
             threading.Thread(target=self.server.shutdown, daemon=True).start()
 
     def _handle_status(self):
-        text = ""
-        try:
-            if STATUS_FILE.exists():
-                text = STATUS_FILE.read_text().strip()
-        except OSError:
-            pass
-        self._json_response({"text": text})
+        self._json_response(_read_status_data())
 
     def _handle_command(self):
-        data = {}
-        try:
-            if COMMAND_FILE.exists():
-                raw = COMMAND_FILE.read_text().strip()
-                if raw:
-                    data = json.loads(raw)
-        except (OSError, json.JSONDecodeError):
-            data = {}
-        # Keep the surface area small: only return known keys.
-        out: dict[str, object] = {}
-        if isinstance(data, dict):
-            if isinstance(data.get("expression"), str):
-                out["expression"] = data["expression"]
-            if isinstance(data.get("auto_cycle"), bool):
-                out["auto_cycle"] = data["auto_cycle"]
-
-            # v2 extensions (all optional)
-            intensity = data.get("intensity")
-            if isinstance(intensity, (int, float)) and intensity == intensity:
-                out["intensity"] = max(0.0, min(1.0, float(intensity)))
-
-            look = data.get("look")
-            if isinstance(look, dict):
-                x = look.get("x")
-                y = look.get("y")
-                if isinstance(x, (int, float)) and isinstance(y, (int, float)) and x == x and y == y:
-                    out["look"] = {
-                        "x": max(-1.0, min(1.0, float(x))),
-                        "y": max(-1.0, min(1.0, float(y))),
-                    }
-
-            blink_seq = data.get("blink_seq")
-            if isinstance(blink_seq, (int, float)) and blink_seq == blink_seq:
-                out["blink_seq"] = int(blink_seq)
-
-            seq = data.get("sequence")
-            if isinstance(seq, str):
-                out["sequence"] = seq
-            seq_seq = data.get("sequence_seq")
-            if isinstance(seq_seq, (int, float)) and seq_seq == seq_seq:
-                out["sequence_seq"] = int(seq_seq)
-        self._json_response(out)
+        self._json_response(_read_command_data())
 
     def _handle_config(self):
         from dataclasses import asdict
+
         data = {
             "behavior": asdict(self.config.behavior),
             "colors": {
@@ -138,6 +248,47 @@ class ClawFaceHandler(SimpleHTTPRequestHandler):
             "display": asdict(self.config.display),
         }
         self._json_response(data)
+
+    def _handle_expressions(self):
+        from .expressions import CANONICAL, COMPAT_MAP, SPECIAL, WEIGHTS
+
+        self._json_response(
+            {
+                "canonical": CANONICAL,
+                "compat": COMPAT_MAP,
+                "special": SPECIAL,
+                "weights": WEIGHTS,
+            }
+        )
+
+    def _handle_events(self):
+        """SSE endpoint — streams status and command changes."""
+        broker = getattr(self.server, "sse_broker", None)
+        if broker is None:
+            self._json_response({"error": "SSE not available"})
+            return
+
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+
+        q = broker.subscribe()
+        try:
+            while True:
+                try:
+                    event_type, data = q.get(timeout=15)
+                    self.wfile.write(f"event: {event_type}\ndata: {data}\n\n".encode())
+                    self.wfile.flush()
+                except queue.Empty:
+                    # Keepalive comment
+                    self.wfile.write(b": keepalive\n\n")
+                    self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            broker.unsubscribe(q)
 
     def _handle_fullscreen_toggle(self):
         if not self._require_loopback():
@@ -169,11 +320,11 @@ class ClawFaceHandler(SimpleHTTPRequestHandler):
 
 
 def _start_server(config, port):
-    """Create and return an HTTPServer, or None on failure."""
+    """Create and return a ThreadingHTTPServer, or None on failure."""
     handler = partial(ClawFaceHandler, config=config)
     host = getattr(config.display, "host", "127.0.0.1")
     try:
-        return HTTPServer((host, port), handler)
+        server = ThreadingHTTPServer((host, port), handler)
     except OSError as e:
         if e.errno == 98:  # Address already in use
             msg = f"port {port} is already in use"
@@ -181,6 +332,19 @@ def _start_server(config, port):
             print(f"Error: {msg}. Try --port <number>.")
             return None
         raise
+    # Attach and start SSE broker
+    broker = SSEBroker()
+    server.sse_broker = broker
+    broker.start()
+    return server
+
+
+def _shutdown_server(server):
+    """Stop SSE broker and close server."""
+    broker = getattr(server, "sse_broker", None)
+    if broker:
+        broker.stop()
+    server.server_close()
 
 
 def run_server(config: Config, port: int = 8420, mode: str = "webview"):
@@ -234,6 +398,7 @@ def _run_webview(server, url, config: Config):
 
     # webview.start() blocks until all windows are closed, then returns
     server.shutdown()
+    _shutdown_server(server)
     return 0
 
 
@@ -248,7 +413,7 @@ def _run_browser(server, url):
     except KeyboardInterrupt:
         print("\nStopping...")
     finally:
-        server.server_close()
+        _shutdown_server(server)
     return 0
 
 
@@ -262,5 +427,5 @@ def _run_headless(server, url):
     except KeyboardInterrupt:
         print("\nStopping...")
     finally:
-        server.server_close()
+        _shutdown_server(server)
     return 0

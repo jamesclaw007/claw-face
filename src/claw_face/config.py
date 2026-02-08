@@ -16,6 +16,7 @@ log = logging.getLogger(__name__)
 @dataclass
 class Colors:
     """Color configuration (RGB tuples) - OLED eye style."""
+
     background: Tuple[int, int, int] = (0, 0, 0)
     eye_color: Tuple[int, int, int] = (0, 184, 255)
 
@@ -40,6 +41,7 @@ class Colors:
 @dataclass
 class Behavior:
     """Behavior timing configuration."""
+
     blink_interval_min: float = 3.0
     blink_interval_max: float = 6.0
     look_interval_min: float = 2.0
@@ -86,6 +88,7 @@ class Behavior:
 @dataclass
 class Display:
     """Display / server configuration."""
+
     host: str = "127.0.0.1"
     port: int = 8420
     fullscreen: bool = True
@@ -134,6 +137,7 @@ def _safe_init(cls, data: dict):
 @dataclass
 class Config:
     """Main configuration container."""
+
     colors: Colors = field(default_factory=Colors)
     behavior: Behavior = field(default_factory=Behavior)
     display: Display = field(default_factory=Display)
@@ -149,8 +153,9 @@ class Config:
 
         self.validate()
         data = {
-            "colors": {k: list(v) if isinstance(v, tuple) else v
-                      for k, v in asdict(self.colors).items()},
+            "colors": {
+                k: list(v) if isinstance(v, tuple) else v for k, v in asdict(self.colors).items()
+            },
             "behavior": asdict(self.behavior),
             "display": asdict(self.display),
         }
@@ -170,10 +175,13 @@ class Config:
             with open(path) as f:
                 data = json.load(f)
 
-            colors = _safe_init(Colors, {
-                k: tuple(v) if isinstance(v, list) else v
-                for k, v in data.get("colors", {}).items()
-            })
+            colors = _safe_init(
+                Colors,
+                {
+                    k: tuple(v) if isinstance(v, list) else v
+                    for k, v in data.get("colors", {}).items()
+                },
+            )
             behavior = _safe_init(Behavior, data.get("behavior", {}))
             display = _safe_init(Display, data.get("display", {}))
 

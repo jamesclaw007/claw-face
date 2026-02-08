@@ -41,7 +41,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-claw_face = ["web/*"]
+claw_face = ["web/*", "web/fonts/*"]
 
 [tool.black]
 line-length = 100
@@ -49,4 +49,6 @@ target-version = ["py310"]
 
 [tool.ruff]
 line-length = 100
+
+[tool.ruff.lint]
 select = ["E", "F", "W", "I"]

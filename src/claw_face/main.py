@@ -34,14 +34,10 @@ Examples:
   claw-face --windowed         # Webview in a resizable window
   claw-face --fps 20           # Lower framerate (kiosk power savings)
   claw-face --save-config      # Save default config to edit
-"""
+""",
     )
 
-    parser.add_argument(
-        "--version", "-v",
-        action="version",
-        version=f"Claw Face {__version__}"
-    )
+    parser.add_argument("--version", "-v", action="version", version=f"Claw Face {__version__}")
 
     parser.add_argument(
         "--log-level",
@@ -50,64 +46,44 @@ Examples:
     )
 
     parser.add_argument(
-        "--host",
-        type=str,
-        default=None,
-        help="HTTP server host/interface (default: 127.0.0.1)"
+        "--host", type=str, default=None, help="HTTP server host/interface (default: 127.0.0.1)"
     )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=None,
-        help="HTTP server port (default: 8420)"
-    )
+    parser.add_argument("--port", type=int, default=None, help="HTTP server port (default: 8420)")
 
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
-        "--browser",
-        action="store_true",
-        help="Open in system browser instead of native window"
+        "--browser", action="store_true", help="Open in system browser instead of native window"
     )
     mode.add_argument(
-        "--headless",
-        action="store_true",
-        help="Run server only, no window or browser"
+        "--headless", action="store_true", help="Run server only, no window or browser"
     )
 
     parser.add_argument(
         "--windowed",
         action="store_true",
-        help="Run native windowed mode (disables fullscreen in webview mode)"
+        help="Run native windowed mode (disables fullscreen in webview mode)",
     )
     parser.add_argument(
-        "--width",
-        type=int,
-        default=None,
-        help="Window width for --windowed (default from config)"
+        "--width", type=int, default=None, help="Window width for --windowed (default from config)"
     )
     parser.add_argument(
         "--height",
         type=int,
         default=None,
-        help="Window height for --windowed (default from config)"
+        help="Window height for --windowed (default from config)",
     )
     parser.add_argument(
-        "--fps",
-        type=int,
-        default=None,
-        help="Target FPS for animation (default from config)"
+        "--fps", type=int, default=None, help="Target FPS for animation (default from config)"
     )
 
     parser.add_argument(
-        "--config", "-c",
-        type=str,
-        help=f"Path to config file (default: {CONFIG_FILE})"
+        "--config", "-c", type=str, help=f"Path to config file (default: {CONFIG_FILE})"
     )
 
     parser.add_argument(
         "--save-config",
         action="store_true",
-        help="Save default configuration to config file and exit"
+        help="Save default configuration to config file and exit",
     )
 
     return parser.parse_args()
@@ -134,6 +110,7 @@ def main():
     # Load config
     if args.config:
         from pathlib import Path
+
         config = Config.load(Path(args.config))
     else:
         config = Config.load()
@@ -163,6 +140,7 @@ def main():
 
     # Run the web server
     from .server import run_server
+
     try:
         return run_server(config, port=config.display.port, mode=mode)
     except KeyboardInterrupt:
