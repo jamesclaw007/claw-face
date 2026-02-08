@@ -5,13 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Claw Face</title>
   <style>
-    @font-face {
-      font-family: 'Share Tech Mono';
-      font-style: normal;
-      font-weight: 400;
-      font-display: swap;
-      src: url('fonts/ShareTechMono-Regular.woff2') format('woff2');
-    }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       background: #000;
@@ -24,19 +17,10 @@
       cursor: none;
     }
     canvas { display: block; }
-    .scanlines {
-      position: absolute;
-      pointer-events: none;
-      background-image:
-        linear-gradient(rgba(0,0,0,0.06) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(0,0,0,0.06) 1px, transparent 1px);
-      opacity: 0.6;
-    }
   </style>
 </head>
 <body>
   <canvas id="oled"></canvas>
-  <div class="scanlines" id="scanlines"></div>
 
 <script>
 // ============================================================
@@ -54,7 +38,11 @@ let S = 4; // scale factor, recalculated on resize
 let EYE_COLOR = '#00b8ff';
 let BG_COLOR = '#000000';
 
-const scanlines = document.getElementById('scanlines');
+// Offscreen canvas for 1:1 virtual pixel rendering
+const offCanvas = document.createElement('canvas');
+offCanvas.width = VW;
+offCanvas.height = VH;
+const OC = offCanvas.getContext('2d', { willReadFrequently: true });
 
 function resize() {
   // Fill the screen, maintaining the 2:1 aspect ratio of the virtual OLED
@@ -71,14 +59,6 @@ function resize() {
   S = w / VW;
   canvas.width = Math.round(w);
   canvas.height = Math.round(h);
-
-  // Position grid overlay to match canvas
-  const grid = Math.round(S) + 'px';
-  scanlines.style.width = canvas.width + 'px';
-  scanlines.style.height = canvas.height + 'px';
-  scanlines.style.left = ((ww - canvas.width) / 2) + 'px';
-  scanlines.style.top = ((wh - canvas.height) / 2) + 'px';
-  scanlines.style.backgroundSize = grid + ' ' + grid;
 }
 window.addEventListener('resize', resize);
 resize();
@@ -322,18 +302,18 @@ function setExpression(rawName) {
 function fillRoundRect(x, y, w, h, r) {
   r = Math.min(r, w / 2, h / 2);
   if (r < 0) r = 0;
-  C.beginPath();
-  C.moveTo((x + r) * S, y * S);
-  C.lineTo((x + w - r) * S, y * S);
-  C.quadraticCurveTo((x + w) * S, y * S, (x + w) * S, (y + r) * S);
-  C.lineTo((x + w) * S, (y + h - r) * S);
-  C.quadraticCurveTo((x + w) * S, (y + h) * S, (x + w - r) * S, (y + h) * S);
-  C.lineTo((x + r) * S, (y + h) * S);
-  C.quadraticCurveTo(x * S, (y + h) * S, x * S, (y + h - r) * S);
-  C.lineTo(x * S, (y + r) * S);
-  C.quadraticCurveTo(x * S, y * S, (x + r) * S, y * S);
-  C.closePath();
-  C.fill();
+  OC.beginPath();
+  OC.moveTo(x + r, y);
+  OC.lineTo(x + w - r, y);
+  OC.quadraticCurveTo(x + w, y, x + w, y + r);
+  OC.lineTo(x + w, y + h - r);
+  OC.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  OC.lineTo(x + r, y + h);
+  OC.quadraticCurveTo(x, y + h, x, y + h - r);
+  OC.lineTo(x, y + r);
+  OC.quadraticCurveTo(x, y, x + r, y);
+  OC.closePath();
+  OC.fill();
 }
 
 function drawEye(cx, cy, baseW, baseH, r, ep, blink, pupilScale, gazeX, gazeY, catchlight) {
@@ -347,7 +327,7 @@ function drawEye(cx, cy, baseW, baseH, r, ep, blink, pupilScale, gazeX, gazeY, c
   const cl = catchlight || 0;
 
   // Main eye shape
-  C.fillStyle = EYE_COLOR;
+  OC.fillStyle = EYE_COLOR;
   fillRoundRect(x, y, ew, eh, Math.min(r, eh / 2));
 
   // Pupil — only when eye is open enough
@@ -360,7 +340,7 @@ function drawEye(cx, cy, baseW, baseH, r, ep, blink, pupilScale, gazeX, gazeY, c
     const pcx = cx + gazeX * maxShiftX;
     const pcy = cy + oy + gazeY * maxShiftY;
 
-    C.fillStyle = BG_COLOR;
+    OC.fillStyle = BG_COLOR;
     const pupilR = Math.min(Math.min(r, pupilW / 2, pupilH / 2), 6 * ps);
     const px = pcx - pupilW / 2;
     const py = pcy - pupilH / 2;
@@ -371,10 +351,10 @@ function drawEye(cx, cy, baseW, baseH, r, ep, blink, pupilScale, gazeX, gazeY, c
       const dotR = Math.min(pupilW, pupilH) * 0.18 * cl;
       const dotX = pcx + pupilW * 0.18;
       const dotY = pcy - pupilH * 0.18;
-      C.fillStyle = EYE_COLOR;
-      C.beginPath();
-      C.arc(dotX * S, dotY * S, dotR * S, 0, Math.PI * 2);
-      C.fill();
+      OC.fillStyle = EYE_COLOR;
+      OC.beginPath();
+      OC.arc(dotX, dotY, dotR, 0, Math.PI * 2);
+      OC.fill();
     }
   }
 
@@ -382,15 +362,15 @@ function drawEye(cx, cy, baseW, baseH, r, ep, blink, pupilScale, gazeX, gazeY, c
   if (ep.lidTop > 0.02 || Math.abs(ep.tiltTop) > 0.5) {
     const lidH = eh * Math.max(ep.lidTop, 0) + Math.abs(ep.tiltTop);
     if (lidH > 0.5) {
-      C.fillStyle = BG_COLOR;
-      C.beginPath();
-      const lx = (x - 2) * S, rx = (x + ew + 2) * S;
-      const lyTop = (y - 3) * S;
-      const lyBot = (y + lidH + ep.tiltTop) * S;
-      const ryBot = (y + lidH - ep.tiltTop) * S;
-      C.moveTo(lx, lyTop); C.lineTo(rx, lyTop);
-      C.lineTo(rx, ryBot); C.lineTo(lx, lyBot);
-      C.closePath(); C.fill();
+      OC.fillStyle = BG_COLOR;
+      OC.beginPath();
+      const lx = x - 2, rx = x + ew + 2;
+      const lyTop = y - 3;
+      const lyBot = y + lidH + ep.tiltTop;
+      const ryBot = y + lidH - ep.tiltTop;
+      OC.moveTo(lx, lyTop); OC.lineTo(rx, lyTop);
+      OC.lineTo(rx, ryBot); OC.lineTo(lx, lyBot);
+      OC.closePath(); OC.fill();
     }
   }
 
@@ -398,15 +378,15 @@ function drawEye(cx, cy, baseW, baseH, r, ep, blink, pupilScale, gazeX, gazeY, c
   if (ep.lidBot > 0.02 || Math.abs(ep.tiltBot) > 0.5) {
     const lidH = eh * Math.max(ep.lidBot, 0) + Math.abs(ep.tiltBot);
     if (lidH > 0.5) {
-      C.fillStyle = BG_COLOR;
-      C.beginPath();
-      const lx = (x - 2) * S, rx = (x + ew + 2) * S;
-      const lyBot = (y + eh + 3) * S;
-      const lyTop = (y + eh - lidH + ep.tiltBot) * S;
-      const ryTop = (y + eh - lidH - ep.tiltBot) * S;
-      C.moveTo(lx, lyTop); C.lineTo(rx, ryTop);
-      C.lineTo(rx, lyBot); C.lineTo(lx, lyBot);
-      C.closePath(); C.fill();
+      OC.fillStyle = BG_COLOR;
+      OC.beginPath();
+      const lx = x - 2, rx = x + ew + 2;
+      const lyBot = y + eh + 3;
+      const lyTop = y + eh - lidH + ep.tiltBot;
+      const ryTop = y + eh - lidH - ep.tiltBot;
+      OC.moveTo(lx, lyTop); OC.lineTo(rx, ryTop);
+      OC.lineTo(rx, lyBot); OC.lineTo(lx, lyBot);
+      OC.closePath(); OC.fill();
     }
   }
 }
@@ -505,28 +485,60 @@ function updateStatus(dt) {
   }
 }
 
-function renderStatus() {
+// 3x5 bitmap font for status ticker (each glyph: 5 rows of 3-bit masks)
+const FONT_3x5 = {
+  'A':[7,5,7,5,5],'B':[6,5,6,5,6],'C':[7,4,4,4,7],'D':[6,5,5,5,6],
+  'E':[7,4,7,4,7],'F':[7,4,7,4,4],'G':[7,4,5,5,7],'H':[5,5,7,5,5],
+  'I':[7,2,2,2,7],'J':[3,1,1,5,7],'K':[5,6,4,6,5],'L':[4,4,4,4,7],
+  'M':[5,7,5,5,5],'N':[5,7,7,5,5],'O':[7,5,5,5,7],'P':[7,5,7,4,4],
+  'Q':[7,5,5,7,1],'R':[7,5,7,6,5],'S':[7,4,7,1,7],'T':[7,2,2,2,2],
+  'U':[5,5,5,5,7],'V':[5,5,5,5,2],'W':[5,5,5,7,5],'X':[5,5,2,5,5],
+  'Y':[5,5,7,2,2],'Z':[7,1,2,4,7],
+  '0':[7,5,5,5,7],'1':[2,6,2,2,7],'2':[7,1,7,4,7],'3':[7,1,7,1,7],
+  '4':[5,5,7,1,1],'5':[7,4,7,1,7],'6':[7,4,7,5,7],'7':[7,1,1,1,1],
+  '8':[7,5,7,5,7],'9':[7,5,7,1,7],
+  '.':[0,0,0,0,2],',':[0,0,0,2,4],'!':[2,2,2,0,2],'?':[7,1,3,0,2],
+  ':':[0,2,0,2,0],'-':[0,0,7,0,0],'+':[0,2,7,2,0],'=':[0,7,0,7,0],
+  '/':[1,1,2,4,4],'(':[1,2,2,2,1],')':[4,2,2,2,4],
+  '\'':[2,2,0,0,0],'"':[5,5,0,0,0],'_':[0,0,0,0,7],
+  ' ':[0,0,0,0,0],
+};
+
+function renderBitmapStatus() {
   const ss = statusState;
   if (!ss.displayText && ss.phase === 'idle') return;
 
-  const fontSize = 5;
-  C.font = `${fontSize * S}px "Share Tech Mono", monospace`;
-  C.textBaseline = 'top';
-  C.textAlign = 'center';
+  const text = (ss.displayText || '').toUpperCase();
   const statusColor = '#006a8a';
-  C.fillStyle = statusColor;
-  const text = (ss.displayText || '') + ' ';
-  const textY = 54;
-  C.fillText(text, (VW / 2) * S, textY * S);
+  OC.fillStyle = statusColor;
 
-  // Cursor (steady)
-  if (ss.phase === 'typing' || ss.phase === 'hold') {
-    const textW = C.measureText(text).width;
-    const cursorX = (VW / 2) * S + textW / 2;
-    C.fillStyle = statusColor;
-    C.fillRect(cursorX + 1, textY * S, 2 * S, fontSize * S);
+  // 4px per char cell (3px glyph + 1px gap), centered on 128px width
+  const charW = 4;
+  const totalW = text.length * charW;
+  const startX = Math.floor((VW - totalW) / 2);
+  const startY = 57; // baseline for status text
+
+  for (let i = 0; i < text.length; i++) {
+    const glyph = FONT_3x5[text[i]];
+    if (!glyph) continue;
+    const cx = startX + i * charW;
+    for (let row = 0; row < 5; row++) {
+      const bits = glyph[row];
+      for (let col = 0; col < 3; col++) {
+        if (bits & (4 >> col)) {
+          OC.fillRect(cx + col, startY + row, 1, 1);
+        }
+      }
+    }
   }
-  C.textAlign = 'left';
+
+  // Cursor — 1px column after text
+  if (ss.phase === 'typing' || ss.phase === 'hold') {
+    const cursorX = startX + text.length * charW + 1;
+    for (let row = 0; row < 5; row++) {
+      OC.fillRect(cursorX, startY + row, 1, 1);
+    }
+  }
 }
 
 // ============================================================
@@ -562,8 +574,9 @@ function startSequence(name) {
 // RENDER
 // ============================================================
 function render() {
-  C.fillStyle = BG_COLOR;
-  C.fillRect(0, 0, canvas.width, canvas.height);
+  // Phase 1: Draw at 1:1 on offscreen canvas
+  OC.fillStyle = BG_COLOR;
+  OC.fillRect(0, 0, VW, VH);
 
   const e = eye;
   const leftCX = VW / 2 - e.gap / 2 + e.confL;
@@ -577,7 +590,39 @@ function render() {
   drawEye(leftCX, cy, e.baseW, e.baseH, e.cornerR, e.L, blinkL, e.pupilScale, e.gazeX, e.gazeY, e.catchlight);
   drawEye(rightCX, cy, e.baseW, e.baseH, e.cornerR, e.R, blinkR, e.pupilScale, e.gazeX, e.gazeY, e.catchlight);
 
-  renderStatus();
+  renderBitmapStatus();
+
+  // Phase 2: Read pixels and draw as discrete LED dots on main canvas
+  C.fillStyle = BG_COLOR;
+  C.fillRect(0, 0, canvas.width, canvas.height);
+
+  const imgData = OC.getImageData(0, 0, VW, VH);
+  const px = imgData.data;
+  const gap = Math.max(1, Math.round(S * 0.15));
+  const dotSize = Math.max(1, Math.round(S) - gap);
+
+  // Batch pixels by color to minimize fillStyle changes
+  const batches = {};
+  for (let y = 0; y < VH; y++) {
+    for (let x = 0; x < VW; x++) {
+      const i = (y * VW + x) * 4;
+      const r = px[i], g = px[i + 1], b = px[i + 2];
+      // Skip black/near-black pixels (background + anti-alias cleanup)
+      if (r + g + b < 40) continue;
+      const key = (r << 16) | (g << 8) | b;
+      if (!batches[key]) batches[key] = { color: `rgb(${r},${g},${b})`, dots: [] };
+      batches[key].dots.push(x, y);
+    }
+  }
+
+  for (const key in batches) {
+    const batch = batches[key];
+    C.fillStyle = batch.color;
+    const dots = batch.dots;
+    for (let j = 0; j < dots.length; j += 2) {
+      C.fillRect(Math.round(dots[j] * S), Math.round(dots[j + 1] * S), dotSize, dotSize);
+    }
+  }
 }
 
 // ============================================================
