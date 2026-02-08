@@ -174,8 +174,9 @@ const PRESETS = {
     transitionSpeed: 5,
   },
   thinking: {
-    L: { w:0, h:2, offY:-3, tiltTop:0, tiltBot:0, lidTop:0.12, lidBot:0, scaleX:1 },
-    R: { w:0, h:2, offY:-3, tiltTop:0, tiltBot:0, lidTop:0.12, lidBot:0, scaleX:1 },
+    L: { w:0, h:0, offY:0, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, scaleX:1 },
+    R: { w:0, h:0, offY:0, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, scaleX:1 },
+    gaze: { x: 0, y: -0.8 },
     transitionSpeed: 5,
   },
 };
@@ -622,8 +623,12 @@ function frame(ts) {
   if (lookOverride) {
     gazeTargX = lookOverride.x;
     gazeTargY = lookOverride.y;
+  } else if (preset.gaze) {
+    // Apply preset gaze (e.g., thinking looks up)
+    gazeTargX = preset.gaze.x || 0;
+    gazeTargY = preset.gaze.y || 0;
   }
-  const gazeSpd = (lookOverride || e.gazeTargX !== 0 || e.gazeTargY !== 0) ? 8 * 0.08 : 2 * 0.08;
+  const gazeSpd = (lookOverride || preset.gaze || e.gazeTargX !== 0 || e.gazeTargY !== 0) ? 8 * 0.08 : 2 * 0.08;
   e.gazeX = smoothStep(e.gazeX, gazeTargX, gazeSpd, dt);
   e.gazeY = smoothStep(e.gazeY, gazeTargY, gazeSpd, dt);
 
