@@ -96,7 +96,6 @@ def _screensaver_get_active(screensaver: Gio.DBusProxy) -> bool:
         return False
 
 
-
 class IdleDaemon:
     def __init__(self, settings: Settings):
         _load_gi()
