@@ -1,10 +1,6 @@
-# GNOME (Wayland): Show Claw Face When Idle, Lock On ESC
+# GNOME (Wayland): Show Claw Face When Idle
 
-GNOME on Wayland does not support replacing the lock screen with a custom program. The approach here is:
-
-1. Run a small user daemon that watches GNOME idle time (DBus: `org.gnome.Mutter.IdleMonitor`)
-2. When you become idle, it launches Claw Face fullscreen
-3. When you exit Claw Face (ESC/Q), it locks GNOME (DBus: `org.gnome.ScreenSaver.Lock`)
+A small user daemon watches GNOME idle time (DBus: `org.gnome.Mutter.IdleMonitor`) and launches Claw Face fullscreen when you become idle. When you exit Claw Face (ESC/Q), the idle timer resets and the cycle begins again.
 
 ## Install
 
@@ -21,7 +17,7 @@ pip install -e . --user
 claw-face-idle --idle-seconds 10 --port 0
 ```
 
-Wait 10 seconds without input. Claw Face should appear. Press `ESC` to exit, then GNOME should lock.
+Wait 10 seconds without input. Claw Face should appear. Press `ESC` to exit; the idle timer resets.
 
 ## Enable At Login (systemd --user)
 
@@ -44,12 +40,6 @@ systemctl --user enable --now claw-face-idle.service
 ```bash
 journalctl --user -u claw-face-idle.service -f
 ```
-
-## GNOME Lock Settings
-
-If GNOME auto-lock triggers before you press `ESC`, turn it off or increase the delay in:
-
-`Settings -> Privacy -> Screen Lock`
 
 ## Tuning
 

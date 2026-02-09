@@ -5,7 +5,7 @@ GNOME/Wayland idle launcher for Claw Face.
 Runs as a user daemon:
 - Wait for GNOME idle (via org.gnome.Mutter.IdleMonitor)
 - Launch Claw Face fullscreen when idle
-- After Claw Face exits (ESC/Q), lock the session (org.gnome.ScreenSaver)
+- After Claw Face exits (ESC/Q), re-arm the idle watch
 """
 
 from __future__ import annotations
@@ -48,7 +48,6 @@ def _load_gi() -> None:
 @dataclass(frozen=True)
 class Settings:
     idle_seconds: int
-    lock_on_exit: bool
     face_port: int
     face_args: list[str]
     screen_off: Optional[tuple[int, int]] = None  # (hour, minute) — start of night
@@ -96,23 +95,6 @@ def _screensaver_get_active(screensaver: Gio.DBusProxy) -> bool:
     except Exception:
         return False
 
-
-def _screensaver_lock(screensaver: Gio.DBusProxy) -> bool:
-    try:
-        _dbus_call(screensaver, "Lock", None)
-        return True
-    except Exception:
-        return False
-
-
-def _fallback_lock() -> None:
-    # Try a couple of best-effort fallbacks if the GNOME screensaver DBus API is unavailable.
-    for cmd in (["loginctl", "lock-session"], ["gnome-screensaver-command", "-l"]):
-        try:
-            subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return
-        except FileNotFoundError:
-            continue
 
 
 class IdleDaemon:
@@ -335,11 +317,11 @@ class IdleDaemon:
         env.setdefault("PYTHONUNBUFFERED", "1")
         self._face_proc = subprocess.Popen(cmd, env=env)
 
-        t = threading.Thread(target=self._wait_face_then_lock_and_rearm, daemon=True)
+        t = threading.Thread(target=self._wait_face_then_rearm, daemon=True)
         t.start()
         return GLib.SOURCE_REMOVE
 
-    def _wait_face_then_lock_and_rearm(self) -> None:
+    def _wait_face_then_rearm(self) -> None:
         proc = self._face_proc
         if proc is None:
             return
@@ -351,18 +333,12 @@ class IdleDaemon:
         if self._exiting:
             return
 
-        if self.settings.lock_on_exit:
-            if not _screensaver_lock(self.screensaver):
-                _fallback_lock()
-            # After locking, wait for user activity (unlock) before re-arming idle watch.
-            GLib.idle_add(self._set_user_active_watch)
-        else:
-            # If we didn't lock, restart the idle timer from "now".
-            try:
-                _dbus_call(self.idle, "ResetIdletime", None)
-            except Exception:
-                pass
-            GLib.idle_add(self._set_idle_watch)
+        # Restart the idle timer from "now".
+        try:
+            _dbus_call(self.idle, "ResetIdletime", None)
+        except Exception:
+            pass
+        GLib.idle_add(self._set_idle_watch)
 
     def stop(self) -> None:
         self._exiting = True
@@ -416,17 +392,12 @@ def _parse_hhmm(value: str) -> tuple[int, int]:
 def _parse_args(argv: list[str]) -> Settings:
     p = argparse.ArgumentParser(
         prog="claw-face-idle",
-        description="Launch Claw Face when GNOME reports idle; lock after exit.",
+        description="Launch Claw Face when GNOME reports idle.",
     )
     p.add_argument(
         "--idle-seconds",
         default="auto",
         help="Idle time before launching (seconds) or 'auto' to use GNOME idle-delay (default).",
-    )
-    p.add_argument(
-        "--no-lock",
-        action="store_true",
-        help="Do not lock on Claw Face exit.",
     )
     p.add_argument(
         "--port",
@@ -484,7 +455,6 @@ def _parse_args(argv: list[str]) -> Settings:
 
     return Settings(
         idle_seconds=idle_seconds,
-        lock_on_exit=not bool(a.no_lock),
         face_port=int(a.port),
         face_args=face_args,
         screen_off=screen_off,
