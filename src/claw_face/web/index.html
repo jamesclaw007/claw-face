@@ -429,16 +429,27 @@ function setStatusText(text) {
     return;
   }
 
+  const isLong = text.length > 30; // longer than one line → use scroll, skip typing
+
   if (ss.phase === 'idle' && !ss.displayText) {
-    // Nothing showing — type it directly
+    // Nothing showing
     ss.currentText = text;
-    ss.charIdx = 0;
-    ss.displayText = '';
-    ss.phase = 'typing';
+    if (isLong) {
+      // Long text: show immediately, let scroll handle it
+      ss.charIdx = text.length;
+      ss.displayText = text;
+      ss.phase = 'hold';
+    } else {
+      // Short text: type it out
+      ss.charIdx = 0;
+      ss.displayText = '';
+      ss.phase = 'typing';
+    }
     ss.timer = 0;
   } else {
-    // Something showing — erase first, then type new
+    // Something showing — erase first, then type/show new
     ss.pendingText = text;
+    ss.pendingIsLong = isLong;
     if (ss.phase !== 'erasing' && ss.phase !== 'erase_then_type') {
       ss.phase = 'erase_then_type';
       ss.timer = 0;
@@ -476,10 +487,19 @@ function updateStatus(dt) {
       if (ss.charIdx <= 0) {
         if (ss.phase === 'erase_then_type' && ss.pendingText) {
           ss.currentText = ss.pendingText;
+          const isLong = ss.pendingIsLong || false;
           ss.pendingText = null;
-          ss.charIdx = 0;
-          ss.displayText = '';
-          ss.phase = 'typing';
+          ss.pendingIsLong = false;
+          if (isLong) {
+            // Long text: show immediately for scrolling
+            ss.charIdx = ss.currentText.length;
+            ss.displayText = ss.currentText;
+            ss.phase = 'hold';
+          } else {
+            ss.charIdx = 0;
+            ss.displayText = '';
+            ss.phase = 'typing';
+          }
           ss.timer = 0;
         } else {
           ss.displayText = '';
