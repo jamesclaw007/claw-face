@@ -97,10 +97,22 @@ def map_face_to_gaze(face_cx: float, face_cy: float,
 def run_tracker(device: int = 0, interval: float = 0.15,
                  scale: float = 0.3) -> None:
     """Main tracking loop."""
-    cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_alt2.xml"
-    cascade = cv2.CascadeClassifier(cascade_path)
-    if cascade.empty():
-        print(f"ERROR: Could not load cascade from {cascade_path}", file=sys.stderr)
+    # Primary: face detection (multiple cascades for robustness)
+    face_cascades = []
+    for name in ["haarcascade_frontalface_alt2.xml",
+                 "haarcascade_frontalface_default.xml",
+                 "haarcascade_profileface.xml"]:
+        c = cv2.CascadeClassifier(cv2.data.haarcascades + name)
+        if not c.empty():
+            face_cascades.append((name, c))
+
+    # Fallback: upper body detection (works when face is obscured)
+    body_cascade = cv2.CascadeClassifier(
+        cv2.data.haarcascades + "haarcascade_upperbody.xml"
+    )
+
+    if not face_cascades and body_cascade.empty():
+        print("ERROR: Could not load any cascade classifiers", file=sys.stderr)
         sys.exit(1)
 
     cap = cv2.VideoCapture(device)
@@ -114,11 +126,13 @@ def run_tracker(device: int = 0, interval: float = 0.15,
 
     cmd_path = get_command_path()
     print(f"Face tracker started (device={device}, interval={interval}s)")
+    print(f"Cascades loaded: {[n for n,_ in face_cascades]}")
+    print(f"Body fallback: {'yes' if not body_cascade.empty() else 'no'}")
     print(f"Command path: {cmd_path}")
 
     running = True
 
-    def handle_signal(sig, frame):
+    def handle_signal(sig, _frame):
         nonlocal running
         running = False
 
@@ -142,28 +156,48 @@ def run_tracker(device: int = 0, interval: float = 0.15,
             small = cv2.resize(frame, (int(w * scale), int(h * scale)))
             gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
 
-            # Detect faces
-            faces = cascade.detectMultiScale(
-                gray,
-                scaleFactor=1.15,
-                minNeighbors=4,
-                minSize=(int(20 * scale), int(20 * scale)),
-                flags=cv2.CASCADE_SCALE_IMAGE,
-            )
+            # Try face detection with each cascade
+            faces = []
+            for _name, cascade in face_cascades:
+                faces = cascade.detectMultiScale(
+                    gray,
+                    scaleFactor=1.1,
+                    minNeighbors=3,
+                    minSize=(int(20 * scale), int(20 * scale)),
+                    flags=cv2.CASCADE_SCALE_IMAGE,
+                )
+                if len(faces) > 0:
+                    break
+
+            # Fallback to upper body if no face found
+            is_body = False
+            if len(faces) == 0 and not body_cascade.empty():
+                faces = body_cascade.detectMultiScale(
+                    gray,
+                    scaleFactor=1.05,
+                    minNeighbors=2,
+                    minSize=(int(30 * scale), int(30 * scale)),
+                    flags=cv2.CASCADE_SCALE_IMAGE,
+                )
+                is_body = len(faces) > 0
 
             current_cmd = read_current_command(cmd_path)
 
             if len(faces) > 0:
                 no_face_count = 0
 
-                # Use the largest face (closest person)
+                # Use the largest detection (closest person)
                 areas = [fw * fh for (_, _, fw, fh) in faces]
                 best = max(range(len(faces)), key=lambda i: areas[i])
                 fx, fy, fw, fh = faces[best]
 
                 # Scale back to original frame coordinates
                 cx = (fx + fw / 2) / scale
-                cy = (fy + fh / 2) / scale
+                # For body detection, estimate face position (upper third)
+                if is_body:
+                    cy = (fy + fh * 0.25) / scale
+                else:
+                    cy = (fy + fh / 2) / scale
 
                 target_x, target_y = map_face_to_gaze(cx, cy, w, h)
 
