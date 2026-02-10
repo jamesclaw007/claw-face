@@ -175,7 +175,8 @@ def run_tracker(device: int = 0, interval: float = 0.15,
     no_face_count = 0
     NO_FACE_THRESHOLD = 8  # frames without face before clearing look
     tracking_active = False  # whether we're currently tracking someone
-    TRACKER_STATUS_PREFIX = "👀 "  # prefix to identify our status messages
+    last_seen_time = 0.0     # timestamp of last face detection
+    GREETING_COOLDOWN = 300  # seconds (5 min) before showing greeting again
 
     try:
         while running:
@@ -240,12 +241,16 @@ def run_tracker(device: int = 0, interval: float = 0.15,
 
                 write_look(cmd_path, last_gaze_x, last_gaze_y, current_cmd)
 
-                # Show greeting when we first detect someone
+                # Show greeting when we first detect someone (with cooldown)
                 if not tracking_active:
                     tracking_active = True
-                    greeting = random.choice(GREETINGS)
-                    write_status(status_path, greeting)
-                    print(f"Face detected — {greeting}")
+                    now = time.time()
+                    if now - last_seen_time > GREETING_COOLDOWN:
+                        greeting = random.choice(GREETINGS)
+                        write_status(status_path, greeting)
+                        print(f"Face detected — {greeting}")
+                    else:
+                        print("Face detected (cooldown active, no greeting)")
 
             else:
                 no_face_count += 1
@@ -258,6 +263,7 @@ def run_tracker(device: int = 0, interval: float = 0.15,
                     # Clear our greeting if it's still showing
                     if tracking_active:
                         tracking_active = False
+                        last_seen_time = time.time()
                         cur_status = read_status(status_path)
                         if cur_status in GREETINGS:
                             write_status(status_path, "")
