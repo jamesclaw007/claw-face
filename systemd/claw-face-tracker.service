@@ -1,0 +1,13 @@
+[Unit]
+Description=Claw Face webcam face tracker
+After=graphical-session.target claw-face-idle.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -m claw_face.face_tracker --device 0 --interval 0.15
+Environment=PYTHONPATH=/home/james/Projects/claw-face/src
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

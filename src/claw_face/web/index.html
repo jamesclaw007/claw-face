@@ -608,8 +608,14 @@ function doWinkL() { eye.blinkLDir = 1; eye.blinkL = 0; }
 function doWinkR() { eye.blinkRDir = 1; eye.blinkR = 0; }
 
 // ============================================================
-// SEQUENCES (boot, error_pulse)
+// SEQUENCES (boot, error_pulse, yawn)
 // ============================================================
+
+// Yawn state
+let yawnTimer = 8 + Math.random() * 12; // seconds until next yawn
+const YAWN_MIN_INTERVAL = 15; // min seconds between yawns
+const YAWN_MAX_INTERVAL = 40; // max seconds between yawns
+
 function startSequence(name) {
   const n = typeof name === 'string' ? name : '';
   const now = performance.now();
@@ -623,6 +629,47 @@ function startSequence(name) {
     activeSequence = { name: 'error_pulse', untilMs: now + 900, stage: 0, startMs: now };
     setExpression('scared');
     return;
+  }
+  if (n === 'yawn') {
+    // Yawn: 4 seconds total
+    // 0-1.2s: eyes slowly close (slower than blink), slight upward gaze
+    // 1.2-2.5s: hold shut
+    // 2.5-4.0s: slowly half-open back to sleepy
+    activeSequence = { name: 'yawn', untilMs: now + 4000, stage: 0, startMs: now };
+    return;
+  }
+}
+
+function updateYawnSequence(dt) {
+  if (!activeSequence || activeSequence.name !== 'yawn') return;
+  const elapsed = (performance.now() - activeSequence.startMs) / 1000;
+  const e = eye;
+
+  if (elapsed < 1.2) {
+    // Stage 0: slowly closing — override blink values directly
+    const t = elapsed / 1.2; // 0→1
+    const eased = t * t; // ease-in (accelerate)
+    e.blinkL = Math.max(e.blinkL, eased);
+    e.blinkR = Math.max(e.blinkR, eased);
+    e.blinkLDir = 0; e.blinkRDir = 0; // prevent normal blink from interfering
+    // Slight upward gaze during yawn
+    e.gazeTargY = -0.3 * eased;
+    if (activeSequence.stage < 1) activeSequence.stage = 1;
+  } else if (elapsed < 2.5) {
+    // Stage 1: held shut
+    e.blinkL = 1; e.blinkR = 1;
+    e.blinkLDir = 0; e.blinkRDir = 0;
+    e.gazeTargY = -0.3;
+  } else {
+    // Stage 2: slowly opening back to half-closed (sleepy)
+    const t = (elapsed - 2.5) / 1.5; // 0→1
+    const eased = 1 - (1 - t) * (1 - t); // ease-out
+    const target = 0.92; // sleepy half-closed level (sleepT covers the rest)
+    e.blinkL = 1 - eased * (1 - target);
+    e.blinkR = 1 - eased * (1 - target);
+    e.blinkLDir = 0; e.blinkRDir = 0;
+    // Gaze drifts back to center
+    e.gazeTargY = -0.3 * (1 - eased);
   }
 }
 
@@ -795,6 +842,15 @@ function frame(ts) {
     }
   }
 
+  // Yawn timer — trigger yawns periodically when in sleepy mood
+  if (e.mood === 'sleepy' && !activeSequence) {
+    yawnTimer -= dt;
+    if (yawnTimer <= 0) {
+      startSequence('yawn');
+      yawnTimer = YAWN_MIN_INTERVAL + Math.random() * (YAWN_MAX_INTERVAL - YAWN_MIN_INTERVAL);
+    }
+  }
+
   // Sequences
   if (activeSequence) {
     const now = performance.now();
@@ -810,6 +866,8 @@ function frame(ts) {
         setMood('normal');
       }
     }
+    // Run yawn animation updates
+    updateYawnSequence(dt);
   }
 
   updateStatus(dt);
