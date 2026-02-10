@@ -406,7 +406,7 @@ def _parse_args(argv: list[str]) -> Settings:
     )
     p.add_argument(
         "--screen-off",
-        default="21:00",
+        default="22:00",
         metavar="HH:MM",
         help=(
             "Start of night window (default: 21:00). Idle turns display off via DPMS "
