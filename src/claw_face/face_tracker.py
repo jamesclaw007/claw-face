@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import signal
 import sys
 import tempfile
@@ -24,6 +25,22 @@ import cv2
 def get_command_path() -> Path:
     """Return the path to the Claw Face command.json file."""
     return Path.home() / ".config" / "claw-face" / "command.json"
+
+
+def get_status_path() -> Path:
+    """Return the path to the Claw Face status.txt file."""
+    return Path.home() / ".config" / "claw-face" / "status.txt"
+
+
+# Greeting messages when a face is detected
+GREETINGS = [
+    "Hi! I see you!",
+    "Oh hey there!",
+    "Hello!",
+    "I see you!",
+    "Hi there!",
+    "Hey! :)",
+]
 
 
 def atomic_write(path: Path, data: str) -> None:
@@ -63,6 +80,19 @@ def clear_look(path: Path, current_cmd: dict) -> None:
     cmd = dict(current_cmd)
     cmd.pop("look", None)
     atomic_write(path, json.dumps(cmd, indent=2) + "\n")
+
+
+def write_status(path: Path, text: str) -> None:
+    """Write status text to status.txt."""
+    atomic_write(path, text + "\n" if text else "")
+
+
+def read_status(path: Path) -> str:
+    """Read current status text."""
+    try:
+        return path.read_text().strip()
+    except Exception:
+        return ""
 
 
 def map_face_to_gaze(face_cx: float, face_cy: float,
@@ -125,6 +155,7 @@ def run_tracker(device: int = 0, interval: float = 0.15,
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
 
     cmd_path = get_command_path()
+    status_path = get_status_path()
     print(f"Face tracker started (device={device}, interval={interval}s)")
     print(f"Cascades loaded: {[n for n,_ in face_cascades]}")
     print(f"Body fallback: {'yes' if not body_cascade.empty() else 'no'}")
@@ -143,6 +174,8 @@ def run_tracker(device: int = 0, interval: float = 0.15,
     smoothing = 0.4  # lower = smoother, higher = more responsive
     no_face_count = 0
     NO_FACE_THRESHOLD = 8  # frames without face before clearing look
+    tracking_active = False  # whether we're currently tracking someone
+    TRACKER_STATUS_PREFIX = "👀 "  # prefix to identify our status messages
 
     try:
         while running:
@@ -206,6 +239,14 @@ def run_tracker(device: int = 0, interval: float = 0.15,
                 last_gaze_y += (target_y - last_gaze_y) * smoothing
 
                 write_look(cmd_path, last_gaze_x, last_gaze_y, current_cmd)
+
+                # Show greeting when we first detect someone
+                if not tracking_active:
+                    tracking_active = True
+                    greeting = random.choice(GREETINGS)
+                    write_status(status_path, greeting)
+                    print(f"Face detected — {greeting}")
+
             else:
                 no_face_count += 1
                 if no_face_count >= NO_FACE_THRESHOLD:
@@ -214,15 +255,26 @@ def run_tracker(device: int = 0, interval: float = 0.15,
                         clear_look(cmd_path, current_cmd)
                     last_gaze_x, last_gaze_y = 0.0, 0.0
 
+                    # Clear our greeting if it's still showing
+                    if tracking_active:
+                        tracking_active = False
+                        cur_status = read_status(status_path)
+                        if cur_status in GREETINGS:
+                            write_status(status_path, "")
+                            print("Face lost — cleared greeting")
+
             time.sleep(interval)
 
     finally:
         cap.release()
-        # Clean up look override on exit
+        # Clean up look override and status on exit
         try:
             current_cmd = read_current_command(cmd_path)
             if "look" in current_cmd:
                 clear_look(cmd_path, current_cmd)
+            cur_status = read_status(status_path)
+            if cur_status in GREETINGS:
+                write_status(status_path, "")
         except Exception:
             pass
         print("Face tracker stopped")
