@@ -1,0 +1,25 @@
+[Unit]
+Description=Claw Face evening - sleepy mode and screen blank
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+Environment=DISPLAY=:0
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+
+# Set Claw Face to sleepy
+ExecStart=/usr/bin/python3 /home/james/Projects/claw-face/skills/openclaw-claw-face/scripts/claw_face_cmd.py --expression sleepy --status "Good night..."
+
+# Wait 3 seconds for status to show
+ExecStart=/usr/bin/sleep 3
+
+# Blank the screen via screensaver
+ExecStart=-/usr/bin/gdbus call --session --dest org.gnome.ScreenSaver --object-path /org/gnome/ScreenSaver --method org.gnome.ScreenSaver.SetActive true
+
+# Also power off display via DPMS
+ExecStart=-/usr/bin/busctl --user call org.gnome.Mutter.DisplayConfig /org/gnome/Mutter/PowerSave org.gnome.Mutter.PowerSave SetPowerSaveMode i 3
+
+[Install]
+WantedBy=default.target

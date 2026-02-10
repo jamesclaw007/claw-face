@@ -1,0 +1,19 @@
+[Unit]
+Description=Claw Face idle launcher (GNOME/Wayland)
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+# Optimize WebKit resource usage
+Environment=WEBKIT_DISABLE_COMPOSITING_MODE=1
+Environment=WEBKIT_FORCE_OFFSCREEN_VIEW_RENDERING=1
+# Reduce Python overhead
+Environment=PYTHONOPTIMIZE=2
+# Launch with FPS limiter
+ExecStart=%h/.local/bin/claw-face-idle --idle-seconds 60 --port 0
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=Claw Face kiosk (always-on)
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStartPre=/bin/sleep 2
+ExecStart=%h/.local/bin/claw-face --fps 20
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
+

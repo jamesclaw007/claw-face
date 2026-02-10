@@ -1,0 +1,28 @@
+[Unit]
+Description=Wake display and start Claw Face
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+Environment=DISPLAY=:0
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+
+# Wake display - deactivate screensaver (prefix with - to not abort on failure)
+ExecStart=-/usr/bin/gdbus call --session --dest org.gnome.ScreenSaver --object-path /org/gnome/ScreenSaver --method org.gnome.ScreenSaver.SetActive false
+
+# Also poke DPMS on in case display is powered off (Wayland/X11)
+ExecStart=-/usr/bin/busctl --user call org.gnome.Mutter.DisplayConfig /org/gnome/Mutter/PowerSave org.gnome.Mutter.PowerSave SetPowerSaveMode i 0
+
+# Restart Claw Face idle service
+ExecStart=/usr/bin/systemctl --user restart claw-face-idle.service
+
+# Give it a moment to launch the face
+ExecStart=/usr/bin/sleep 3
+
+# Set happy expression
+ExecStart=/usr/bin/python3 /home/james/Projects/claw-face/skills/openclaw-claw-face/scripts/claw_face_cmd.py --expression happy --status "Good morning!"
+
+[Install]
+WantedBy=default.target
