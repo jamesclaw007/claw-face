@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Claw Face</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    * { margin: 0; padding: 0; box-sizing: border-box; cursor: none !important; }
     body {
       background: #000;
       overflow: hidden;
@@ -14,9 +14,9 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      cursor: none;
+      cursor: none !important;
     }
-    canvas { display: block; }
+    canvas { display: block; cursor: none !important; }
   </style>
 </head>
 <body>
@@ -164,7 +164,14 @@ const PRESETS = {
     L: { w:0, h:0, offY:0, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, scaleX:1 },
     R: { w:0, h:0, offY:0, tiltTop:0, tiltBot:0, lidTop:0, lidBot:0, scaleX:1 },
     catchlight: 1,
-    gaze: { x: 0, y: -0.8 },
+    gazeAnim: {
+      positions: [
+        { x: -0.6, y: 0.6 },   // down-left (primary)
+        { x: -0.6, y: 0.6 },   // repeat to weight toward down-left
+        { x: 0.6, y: 0.6 },    // down-right (occasional)
+      ],
+      interval: [1.5, 3.5],    // seconds between switches [min, max]
+    },
     transitionSpeed: 5,
   },
 };
@@ -712,11 +719,28 @@ function frame(ts) {
   const targetCL = preset.catchlight || 0;
   e.catchlight = smoothStep(e.catchlight, targetCL, spd * 0.08, dt);
 
+  // Gaze animation (e.g., thinking eyes darting between positions)
+  if (preset.gazeAnim && !lookOverride) {
+    if (!e._gazeAnimTimer) e._gazeAnimTimer = 0;
+    if (!e._gazeAnimIdx) e._gazeAnimIdx = 0;
+    e._gazeAnimTimer -= dt;
+    if (e._gazeAnimTimer <= 0) {
+      const positions = preset.gazeAnim.positions;
+      e._gazeAnimIdx = (e._gazeAnimIdx + 1) % positions.length;
+      const [minI, maxI] = preset.gazeAnim.interval;
+      e._gazeAnimTimer = minI + Math.random() * (maxI - minI);
+    }
+  }
+
   // Gaze smoothing
   let gazeTargX = e.gazeTargX, gazeTargY = e.gazeTargY;
   if (lookOverride) {
     gazeTargX = lookOverride.x;
     gazeTargY = lookOverride.y;
+  } else if (preset.gazeAnim) {
+    const pos = preset.gazeAnim.positions[e._gazeAnimIdx || 0];
+    gazeTargX = pos.x;
+    gazeTargY = pos.y;
   } else if (preset.gaze) {
     // Apply preset gaze (e.g., thinking looks up)
     gazeTargX = preset.gaze.x || 0;
